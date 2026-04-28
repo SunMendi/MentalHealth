@@ -1,0 +1,33 @@
+# Security
+.env
+
+# Environments
+.venv/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Django
+db.sqlite3
+media/
+static/
+
+# IDEs
+.vscode/
+.idea/
+
+# Testing & Development
+seed_db.py
+test_core.py
+test_full_backend.py
+test_voice_engine.py
+test_voice_output.mp3
+
+# Logs
+*.log
