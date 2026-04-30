@@ -84,7 +84,8 @@ REST_FRAMEWORK = {
     ),
 }
 
-CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+# Temporarily allow all origins for fast development
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
 SESSION_COOKIE_SAMESITE = 'None'
