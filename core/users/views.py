@@ -1,32 +1,32 @@
 import os
 import secrets
+import requests
 from urllib.parse import urlencode
 
-import requests
 from django.contrib.auth import get_user_model
-from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import redirect
 from django.urls import reverse
-from django.views import View
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
 from rest_framework_simplejwt.tokens import RefreshToken
 
 User = get_user_model()
 
-@method_decorator(csrf_exempt, name='dispatch')
-class GoogleAuthURLView(View):
+class GoogleAuthURLView(APIView):
+    # Allow anyone to access this to get the URL
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
     def get(self, request):
         google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+        # Ensure we use HTTPS for the redirect_uri in production
         redirect_uri = os.getenv("GOOGLE_REDIRECT_URI") or request.build_absolute_uri(
             reverse("google-callback")
-        )
+        ).replace("http://", "https://")
 
         if not google_client_id:
-            return JsonResponse(
-                {"detail": "GOOGLE_CLIENT_ID is not set."},
-                status=500,
-            )
+            return Response({"error": "GOOGLE_CLIENT_ID missing"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         state = secrets.token_urlsafe(32)
         params = {
@@ -40,26 +40,29 @@ class GoogleAuthURLView(View):
         }
 
         auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
-        return JsonResponse({"auth_url": auth_url})
+        return Response({"auth_url": auth_url})
 
-@method_decorator(csrf_exempt, name='dispatch')
-class GoogleCallbackView(View):
+class GoogleCallbackView(APIView):
+    # CRITICAL: Disable all authentication and permissions for the callback
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
     def get(self, request):
-        print("DEBUG: Google Callback hit!")
+        print(">>> GOOGLE CALLBACK INITIATED")
         code = request.GET.get("code")
         
         if not code:
-            print("DEBUG: No code found in request")
-            return HttpResponseBadRequest("Google did not return a code.")
+            return Response({"error": "No code provided by Google"}, status=status.HTTP_400_BAD_REQUEST)
 
         google_client_id = os.getenv("GOOGLE_CLIENT_ID")
         google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
         redirect_uri = os.getenv("GOOGLE_REDIRECT_URI") or request.build_absolute_uri(
             reverse("google-callback")
-        )
+        ).replace("http://", "https://")
 
-        print(f"DEBUG: Exchanging code for token with redirect_uri: {redirect_uri}")
+        print(f">>> Exchanging code with redirect_uri: {redirect_uri}")
 
+        # Exchange code for access token
         token_response = requests.post(
             "https://oauth2.googleapis.com/token",
             data={
@@ -69,49 +72,53 @@ class GoogleCallbackView(View):
                 "redirect_uri": redirect_uri,
                 "grant_type": "authorization_code",
             },
-            timeout=10,
+            timeout=10
         )
 
         if token_response.status_code != 200:
-            print(f"DEBUG: Token exchange failed: {token_response.text}")
-            return HttpResponseBadRequest("Could not get Google tokens.")
+            print(f">>> Token Exchange Failed: {token_response.text}")
+            return Response({"error": "Token exchange failed"}, status=status.HTTP_400_BAD_REQUEST)
 
         token_data = token_response.json()
         access_token = token_data.get("access_token")
-        
-        user_response = requests.get(
+
+        # Get user info from Google
+        user_info_res = requests.get(
             "https://www.googleapis.com/oauth2/v2/userinfo",
             headers={"Authorization": f"Bearer {access_token}"},
-            timeout=10,
+            timeout=10
         )
 
-        if user_response.status_code != 200:
-            return HttpResponseBadRequest("Could not get Google user info.")
+        if user_info_res.status_code != 200:
+            return Response({"error": "Failed to get user info"}, status=status.HTTP_400_BAD_REQUEST)
 
-        google_user = user_response.json()
-        email = google_user.get("email")
-        print(f"DEBUG: Login successful for email: {email}")
+        user_data = user_info_res.json()
+        email = user_data.get("email")
 
-        user = User.objects.filter(email=email).first()
-        if not user:
-            user = User.objects.create_user(
-                username=email,
-                email=email,
-                first_name=google_user.get("given_name", ""),
-                last_name=google_user.get("family_name", ""),
-            )
+        # Find or create user
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "username": email,
+                "first_name": user_data.get("given_name", ""),
+                "last_name": user_data.get("family_name", ""),
+            }
+        )
 
+        print(f">>> User {email} logged in (Created: {created})")
+
+        # Generate JWT tokens
         refresh = RefreshToken.for_user(user)
-        frontend_url = os.getenv("FRONTEND_GOOGLE_REDIRECT_URL")
-
-        if frontend_url:
+        
+        frontend_redirect = os.getenv("FRONTEND_GOOGLE_REDIRECT_URL")
+        if frontend_redirect:
             params = urlencode({
                 "access": str(refresh.access_token),
                 "refresh": str(refresh),
             })
-            return redirect(f"{frontend_url}?{params}")
+            return redirect(f"{frontend_redirect}?{params}")
 
-        return JsonResponse({
+        return Response({
             "access": str(refresh.access_token),
             "refresh": str(refresh),
             "user": {"email": user.email}

@@ -9,6 +9,9 @@ SECRET_KEY = 'django-insecure-&vozo4ff2gu((-v^^*ik&_s(@/usr/bin/bash^izs=5@1l=ca
 DEBUG = True
 ALLOWED_HOSTS = ['*']
 
+# ARCHITECT FIX: Trust the Railway Proxy
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -84,7 +87,6 @@ REST_FRAMEWORK = {
     ),
 }
 
-# Final Cross-Domain Auth Security Fix
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
@@ -95,13 +97,8 @@ CORS_ALLOWED_ORIGINS = [
 ]
 CORS_ALLOW_CREDENTIALS = True
 
-SESSION_COOKIE_SAMESITE = 'None'
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SAMESITE = 'None'
-CSRF_COOKIE_SECURE = True
-
-# Standard Django CSRF setting
 CSRF_TRUSTED_ORIGINS = [
+    "https://mentalhealth-production-fb51.up.railway.app",
     "https://ede0440e-15a8-49f4-aa23-a98320c493cf.lovableproject.com",
     "https://id-preview--ede0440e-15a8-49f4-aa23-a98320c493cf.lovable.app",
     "https://sereniomind.com",
