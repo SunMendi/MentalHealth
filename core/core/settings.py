@@ -84,7 +84,7 @@ REST_FRAMEWORK = {
     ),
 }
 
-# Fix: specific origins are required for credentials (cookies) to work
+# Final Cross-Domain Auth Security Fix
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
@@ -95,14 +95,17 @@ CORS_ALLOWED_ORIGINS = [
 ]
 CORS_ALLOW_CREDENTIALS = True
 
-# Session and CSRF settings for cross-domain Auth
 SESSION_COOKIE_SAMESITE = 'None'
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SAMESITE = 'None'
 CSRF_COOKIE_SECURE = True
 
-# Required for Google Auth redirect to work with SameSite=None
-SESSION_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
+# Standard Django CSRF setting
+CSRF_TRUSTED_ORIGINS = [
+    "https://ede0440e-15a8-49f4-aa23-a98320c493cf.lovableproject.com",
+    "https://id-preview--ede0440e-15a8-49f4-aa23-a98320c493cf.lovable.app",
+    "https://sereniomind.com",
+]
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
