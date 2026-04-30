@@ -84,14 +84,25 @@ REST_FRAMEWORK = {
     ),
 }
 
-# Temporarily allow all origins for fast development
-CORS_ALLOW_ALL_ORIGINS = True
+# Fix: specific origins are required for credentials (cookies) to work
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://ede0440e-15a8-49f4-aa23-a98320c493cf.lovableproject.com",
+    "https://id-preview--ede0440e-15a8-49f4-aa23-a98320c493cf.lovable.app",
+    "https://sereniomind.com",
+]
 CORS_ALLOW_CREDENTIALS = True
 
+# Session and CSRF settings for cross-domain Auth
 SESSION_COOKIE_SAMESITE = 'None'
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SAMESITE = 'None'
 CSRF_COOKIE_SECURE = True
+
+# Required for Google Auth redirect to work with SameSite=None
+SESSION_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
