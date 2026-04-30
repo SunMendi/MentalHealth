@@ -9,9 +9,16 @@ SECRET_KEY = 'django-insecure-&vozo4ff2gu((-v^^*ik&_s(@/usr/bin/bash^izs=5@1l=ca
 DEBUG = True
 ALLOWED_HOSTS = ['*']
 
-# ARCHITECT FIX: Trust the Railway Proxy
+# ARCHITECT RECOVERY: Trust the Proxy and Disable Strict Headers for Dev
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin-allow-popups"
+USE_X_FORWARDED_HOST = True
+USE_X_FORWARDED_PORT = True
+
+# Disable the headers causing ERR_BLOCKED_BY_RESPONSE
+SECURE_CROSS_ORIGIN_OPENER_POLICY = None
+X_FRAME_OPTIONS = 'ALLOWALL'
+XS_RF_COOKIE_SAMESITE = 'None'
+SESSION_COOKIE_SAMESITE = 'None'
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -88,24 +95,15 @@ REST_FRAMEWORK = {
     ),
 }
 
-CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "https://ede0440e-15a8-49f4-aa23-a98320c493cf.lovableproject.com",
-    "https://id-preview--ede0440e-15a8-49f4-aa23-a98320c493cf.lovable.app",
-    "https://sereniomind.com",
-]
+CORS_ALLOW_ALL_ORIGINS = True  # Fully open for recovery
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
-    "https://mentalhealth-production-fb51.up.railway.app",
-    "https://ede0440e-15a8-49f4-aa23-a98320c493cf.lovableproject.com",
-    "https://id-preview--ede0440e-15a8-49f4-aa23-a98320c493cf.lovable.app",
+    "https://*.up.railway.app",
+    "https://*.lovableproject.com",
+    "https://*.lovable.app",
     "https://sereniomind.com",
 ]
-
-X_FRAME_OPTIONS = "SAMEORIGIN"
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
