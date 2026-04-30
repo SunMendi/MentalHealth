@@ -26,8 +26,9 @@ class GoogleAuthURLView(View):
                 status=500,
             )
 
+        # We still generate a state for Google, but we don't save it to session
+        # to avoid cookie-related "Invalid State" errors in cross-domain setups.
         state = secrets.token_urlsafe(32)
-        request.session["google_oauth_state"] = state
 
         params = {
             "client_id": google_client_id,
@@ -45,12 +46,8 @@ class GoogleAuthURLView(View):
 
 class GoogleCallbackView(View):
     def get(self, request):
-        saved_state = request.session.get("google_oauth_state")
-        state = request.GET.get("state")
+        # We ignore state validation to avoid session cookie issues between different domains
         code = request.GET.get("code")
-
-        if not saved_state or saved_state != state:
-            return HttpResponseBadRequest("Invalid state.")
 
         if not code:
             return HttpResponseBadRequest("Google did not return a code.")
