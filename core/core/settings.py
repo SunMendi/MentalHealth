@@ -11,6 +11,7 @@ ALLOWED_HOSTS = ['*']
 
 # ARCHITECT FIX: Trust the Railway Proxy
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin-allow-popups"
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -103,6 +104,8 @@ CSRF_TRUSTED_ORIGINS = [
     "https://id-preview--ede0440e-15a8-49f4-aa23-a98320c493cf.lovable.app",
     "https://sereniomind.com",
 ]
+
+X_FRAME_OPTIONS = "SAMEORIGIN"
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'

@@ -6,6 +6,8 @@ from urllib.parse import urlencode
 from django.contrib.auth import get_user_model
 from django.shortcuts import redirect
 from django.urls import reverse
+from django.utils.decorators import method_decorator
+from django.views.decorators.clickjacking import xframe_options_exempt
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
@@ -13,6 +15,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 User = get_user_model()
 
+@method_decorator(xframe_options_exempt, name="dispatch")
 class GoogleAuthURLView(APIView):
     # Allow anyone to access this to get the URL
     permission_classes = [permissions.AllowAny]
@@ -42,6 +45,7 @@ class GoogleAuthURLView(APIView):
         auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
         return Response({"auth_url": auth_url})
 
+@method_decorator(xframe_options_exempt, name="dispatch")
 class GoogleCallbackView(APIView):
     # CRITICAL: Disable all authentication and permissions for the callback
     permission_classes = [permissions.AllowAny]
