@@ -24,11 +24,13 @@ from .services.voice import transcribe_audio, generate_speech
 
 
 class SessionListCreateAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
     def post(self, request):
         serializer = CreateSessionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        session = create_session(serializer.validated_data)
+        session = create_session({**serializer.validated_data, "user": request.user})
 
         return Response(
             {
@@ -43,6 +45,7 @@ class SessionListCreateAPIView(APIView):
 
 class MessageListCreateApiView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, session_id):
         messages = get_all_messages_single_session(session_id)
