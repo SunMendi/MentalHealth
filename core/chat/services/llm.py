@@ -1,90 +1,123 @@
-import os
 import json
 import logging
-import google.generativeai as genai
-from typing import Dict, Any, List, Optional
+import os
+from typing import Any, Dict, List
+
+from groq import Groq
+
 
 logger = logging.getLogger("chat.llm")
 
-# Initialize Gemini Client
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-else:
-    logger.error("CRITICAL: GEMINI_API_KEY is missing!")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", "llama-3.3-70b-versatile")
 
-def call_gemini(system_prompt: str, user_message: str, audio_path: Optional[str] = None, history: List[Dict[str, str]] = None) -> Dict[str, Any]:
-    """
-    Calls Google Gemini 1.5 Flash (Most stable for Free Tier).
-    """
+if not GROQ_API_KEY:
+    logger.error("CRITICAL: GROQ_API_KEY is missing for chat generation!")
+
+client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
+
+JSON_RESPONSE_INSTRUCTIONS = """
+Return valid JSON with exactly these keys:
+- empathetic_response: string
+- detected_category: string or null
+- confidence_score: number between 0 and 1
+- suggested_buttons: array of short strings
+- is_crisis: boolean
+Do not wrap the JSON in markdown.
+"""
+
+
+def _extract_json_payload(content: str) -> Dict[str, Any]:
+    text = (content or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.startswith("json"):
+            text = text[4:].strip()
+
     try:
-        # Switching to 1.5-flash for better quota stability in 2026
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=system_prompt
-        )
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return json.loads(text[start : end + 1])
+        raise
 
-        prompt_parts = []
-        
-        # 1. Handle Audio (Multimodal)
-        if audio_path and os.path.exists(audio_path):
-            try:
-                with open(audio_path, "rb") as f:
-                    audio_data = f.read()
-                    mime_type = "audio/wav"
-                    if audio_path.endswith(".mp3"): mime_type = "audio/mpeg"
-                    elif audio_path.endswith(".webm"): mime_type = "audio/webm"
-                    
-                    prompt_parts.append({
-                        "mime_type": mime_type,
-                        "data": audio_data
-                    })
-                logger.info("Audio attached to Gemini request | path=%s", audio_path)
-            except Exception as e:
-                logger.error("Failed to read audio file for Gemini: %s", e)
 
-        # 2. Handle Text & History
-        context_msg = ""
-        if history:
-            context_msg = "Context:\n" + "\n".join([f"{m['role']}: {m['content']}" for m in history]) + "\n"
-        
-        prompt_parts.append(f"{context_msg}User Message: {user_message or 'Please respond to the audio provided.'}")
-
-        # 3. Request
-        generation_config = {
-            "temperature": 0.7,
-            "response_mime_type": "application/json",
-        }
-
-        response = model.generate_content(
-            prompt_parts,
-            generation_config=generation_config
-        )
-
-        if not response or not response.text:
-            raise ValueError("Gemini returned an empty response")
-
-        return json.loads(response.text)
-
-    except Exception as e:
-        # Log the REAL error so we can see it in Railway
-        logger.error("Gemini API Error Detail: %s", str(e))
-        
-        # If it's a quota error, tell the user politely
-        error_msg = str(e).lower()
-        if "429" in error_msg or "quota" in error_msg:
-            return {
-                "empathetic_response": "I'm receiving too many messages right now. Please wait a few seconds and try again. (Bengali: আমি এই মুহূর্তে অনেক বার্তা পাচ্ছি। দয়া করে কয়েক সেকেন্ড অপেক্ষা করুন।)",
-                "detected_category": None,
-                "confidence_score": 0.0,
-                "suggested_buttons": ["Wait and retry"],
-                "is_crisis": False
-            }
-            
+def call_llm(system_prompt: str, user_message: str, history: List[Dict[str, str]] | None = None) -> Dict[str, Any]:
+    """
+    Calls Groq chat completions for structured mental-health support responses.
+    """
+    if not client:
         return {
             "empathetic_response": "I'm having a technical connection issue. Please check your internet or try again. (Bengali: আমার সংযোগে কিছুটা সমস্যা হচ্ছে। দয়া করে আবার চেষ্টা করুন।)",
             "detected_category": None,
             "confidence_score": 0.0,
             "suggested_buttons": ["Try again"],
-            "is_crisis": False
+            "is_crisis": False,
+        }
+
+    try:
+        messages: List[Dict[str, str]] = [
+            {
+                "role": "system",
+                "content": f"{system_prompt}\n\n{JSON_RESPONSE_INSTRUCTIONS}",
+            }
+        ]
+
+        for item in history or []:
+            role = item.get("role")
+            if role == "user":
+                mapped_role = "user"
+            elif role == "assistant":
+                mapped_role = "assistant"
+            else:
+                continue
+            messages.append(
+                {
+                    "role": mapped_role,
+                    "content": item.get("content", ""),
+                }
+            )
+
+        messages.append({"role": "user", "content": user_message})
+
+        response = client.chat.completions.create(
+            model=GROQ_CHAT_MODEL,
+            messages=messages,
+            temperature=0.4,
+            response_format={"type": "json_object"},
+        )
+
+        content = response.choices[0].message.content if response and response.choices else ""
+        if not content:
+            raise ValueError("Groq returned an empty response")
+
+        parsed = _extract_json_payload(content)
+        logger.info(
+            "Groq chat generation successful | model=%s | response_preview=%s",
+            GROQ_CHAT_MODEL,
+            str(parsed)[:200],
+        )
+        return parsed
+
+    except Exception as e:
+        logger.exception("Groq chat generation failed | model=%s | error=%s", GROQ_CHAT_MODEL, e)
+        error_msg = str(e).lower()
+        if "429" in error_msg or "rate limit" in error_msg or "quota" in error_msg:
+            return {
+                "empathetic_response": "I'm receiving too many messages right now. Please wait a few seconds and try again. (Bengali: আমি এই মুহূর্তে অনেক বার্তা পাচ্ছি। দয়া করে কয়েক সেকেন্ড অপেক্ষা করুন।)",
+                "detected_category": None,
+                "confidence_score": 0.0,
+                "suggested_buttons": ["Wait and retry"],
+                "is_crisis": False,
+            }
+
+        return {
+            "empathetic_response": "I'm having a technical connection issue. Please check your internet or try again. (Bengali: আমার সংযোগে কিছুটা সমস্যা হচ্ছে। দয়া করে আবার চেষ্টা করুন।)",
+            "detected_category": None,
+            "confidence_score": 0.0,
+            "suggested_buttons": ["Try again"],
+            "is_crisis": False,
         }

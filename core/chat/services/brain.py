@@ -1,5 +1,5 @@
 from ..models import ChatSession, ProblemCategory, ChatMessage
-from .llm import call_gemini
+from .llm import call_llm
 from .chat_services import create_user_message, create_assistant_message
 from .safety import check_for_crisis, get_emergency_response
 from .protocols import get_protocol_for_category
@@ -20,8 +20,7 @@ Rules:
 
 def handle_user_input(session_id, user_content, audio_path=None):
     """
-    Orchestrates the response generation. 
-    Now supports direct audio input for native-level Bengali support via Gemini.
+    Orchestrates the response generation.
     """
     # 1. Fetch Session
     session = ChatSession.objects.get(id=session_id)
@@ -56,12 +55,10 @@ def handle_user_input(session_id, user_content, audio_path=None):
         else:
             system_prompt = "Be a supportive listener. Detect and match the user's language (Bengali or English)."
 
-        # 6. Call Gemini Multimodal
-        # Note: We pass audio_path so Gemini can "hear" the native Bengali directly.
-        analysis = call_gemini(
-            system_prompt=system_prompt, 
-            user_message=user_content, 
-            audio_path=audio_path,
+        # 6. Call Groq text generation using the already-transcribed user text.
+        analysis = call_llm(
+            system_prompt=system_prompt,
+            user_message=user_content,
             history=history
         )
     
