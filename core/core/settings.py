@@ -71,6 +71,9 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
+# Disable trailing slash redirection for API stability
+APPEND_SLASH = False
+
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 DATABASES = {

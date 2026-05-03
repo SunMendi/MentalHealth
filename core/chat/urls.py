@@ -10,8 +10,13 @@ from .views import (
 
 urlpatterns = [
     path('chat/sessions/', SessionListCreateAPIView.as_view(), name='chat'),
+    path('chat/sessions', SessionListCreateAPIView.as_view()),
     path('chat/sessions/<int:session_id>/messages/', MessageListCreateApiView.as_view(), name='message'),
+    path('chat/sessions/<int:session_id>/messages', MessageListCreateApiView.as_view()),
     path('plan/daily/', DailyPlanAPIView.as_view(), name='daily-plan'),
+    path('plan/daily', DailyPlanAPIView.as_view()),
     path('plan/activate/<int:category_id>/', ActivatePlanAPIView.as_view(), name='activate-plan'),
+    path('plan/activate/<int:category_id>', ActivatePlanAPIView.as_view()),
     path('community/posts/', CommunityPostAPIView.as_view(), name='community-posts'),
+    path('community/posts', CommunityPostAPIView.as_view()),
 ]
