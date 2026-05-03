@@ -2,6 +2,10 @@ from django.shortcuts import get_object_or_404
 from ..models import ChatMessage, ChatSession
 
 def create_session(dictdata):
+    # Map 'problem_category' (ID) to 'problem_category_id' if present
+    category_id = dictdata.pop('problem_category', None)
+    if category_id:
+        dictdata['problem_category_id'] = category_id
     return ChatSession.objects.create(**dictdata)
 
 def get_all_messages_single_session(session_id):

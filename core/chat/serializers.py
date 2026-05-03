@@ -2,7 +2,8 @@ from rest_framework import serializers
 
 
 class CreateSessionSerializer(serializers.Serializer):
-    title = serializers.CharField(max_length=40, required=False, allow_blank=True)
+    title = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    problem_category = serializers.IntegerField(required=False, allow_null=True)
 
 class ChatMessageSerializer(serializers.Serializer):
     id = serializers.IntegerField()

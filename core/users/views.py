@@ -91,15 +91,20 @@ class GoogleCallbackView(APIView):
                 ("GOOGLE_CLIENT_ID", google_client_id),
                 ("GOOGLE_CLIENT_SECRET", google_client_secret),
                 ("FRONTEND_GOOGLE_REDIRECT_URL", frontend_redirect),
-                ("DJANGO_SECRET_KEY", os.getenv("DJANGO_SECRET_KEY")),
             ) if not value
         ]
+        
+        # Check for SECRET_KEY specifically from settings if DJANGO_SECRET_KEY env var is missing
+        effective_secret_key = os.getenv("DJANGO_SECRET_KEY") or settings.SECRET_KEY
+        if not effective_secret_key or ("django-insecure" in str(effective_secret_key) and not settings.DEBUG):
+            if not os.getenv("DJANGO_SECRET_KEY"):
+                missing_env.append("DJANGO_SECRET_KEY")
+
         if missing_env:
             logger.error("Google callback missing required env vars: %s", ", ".join(missing_env))
             return _error_response(
-                "Server authentication configuration is incomplete.",
+                f"Server configuration incomplete. Missing: {', '.join(missing_env)}",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
-                {"missing": missing_env},
             )
 
         logger.info("Exchanging Google code for token with redirect_uri=%s", redirect_uri)
@@ -219,13 +224,24 @@ class GoogleCallbackView(APIView):
         )
 
         if frontend_redirect:
-            existing_params = dict(parse_qsl(frontend_redirect.split("?", 1)[1])) if "?" in frontend_redirect else {}
-            redirect_base = frontend_redirect.split("?", 1)[0]
+            # Handle potential hash in the redirect URL (common in SPA)
+            redirect_url_parts = frontend_redirect.split("#", 1)
+            base_part = redirect_url_parts[0]
+            hash_part = f"#{redirect_url_parts[1]}" if len(redirect_url_parts) > 1 else ""
+            
+            # Extract existing query params from the base part
+            query_parts = base_part.split("?", 1)
+            redirect_base = query_parts[0]
+            existing_params = dict(parse_qsl(query_parts[1])) if len(query_parts) > 1 else {}
+            
             existing_params.update({
                 "access": str(access_token),
                 "refresh": str(refresh),
             })
-            return redirect(f"{redirect_base}?{urlencode(existing_params)}")
+            
+            final_redirect = f"{redirect_base}?{urlencode(existing_params)}{hash_part}"
+            logger.info("Redirecting to frontend: %s", final_redirect)
+            return redirect(final_redirect)
 
         return Response({
             "access": str(access_token),

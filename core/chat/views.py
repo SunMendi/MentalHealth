@@ -23,14 +23,26 @@ from .services.plans import get_daily_task, complete_daily_task, activate_plan
 from .services.voice import transcribe_audio, generate_speech
 
 
+import logging
+
+logger = logging.getLogger("chat.views")
+
 class SessionListCreateAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
+        logger.info("Session creation initiated | user_id=%s | data=%s", request.user.id, request.data)
         serializer = CreateSessionSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            logger.error("Session creation validation failed | errors=%s", serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        session = create_session({**serializer.validated_data, "user": request.user})
+        try:
+            session = create_session({**serializer.validated_data, "user": request.user})
+            logger.info("Session created successfully | session_id=%s", session.id)
+        except Exception as exc:
+            logger.exception("Session creation failed in service: %s", exc)
+            return Response({"error": "Internal server error during session creation"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return Response(
             {
