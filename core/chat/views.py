@@ -1,5 +1,7 @@
 import os
 import uuid
+import logging
+from asgiref.sync import async_to_sync
 from django.conf import settings
 from rest_framework import status, permissions
 from rest_framework.response import Response
@@ -19,32 +21,9 @@ from .services.chat_services import (
 )
 from .services.brain import handle_user_input
 from .services.plans import get_daily_task, complete_daily_task, activate_plan
-from .services.voice import generate_and_upload_speech, transcribe_audio
-
-
-import logging
+from .services.voice import generate_speech_base64, transcribe_audio
 
 logger = logging.getLogger("chat.views")
-
-
-def attach_assistant_audio(assistant_message):
-    if assistant_message.sender != "assistant" or not assistant_message.content:
-        return None
-
-    tts_payload = generate_and_upload_speech(
-        text=assistant_message.content,
-        public_id=f"assistant_message_{assistant_message.id}",
-    )
-    metadata = dict(assistant_message.metadata or {})
-    metadata.update(
-        {
-            "audio_url": tts_payload["audio_url"],
-            "tts_voice": tts_payload["voice"],
-        }
-    )
-    assistant_message.metadata = metadata
-    assistant_message.save(update_fields=["metadata"])
-    return tts_payload["audio_url"]
 
 class SessionListCreateAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -110,6 +89,7 @@ class MessageListCreateApiView(APIView):
         user_content = request.data.get("content")
         audio_file = request.FILES.get("audio")
         
+        # 1. Handle user voice input (STT)
         if audio_file:
             temp_name = f"temp_{uuid.uuid4()}.wav"
             temp_path = os.path.join(settings.BASE_DIR, "media", "temp", temp_name)
@@ -120,7 +100,9 @@ class MessageListCreateApiView(APIView):
                     destination.write(chunk)
             
             user_content = transcribe_audio(temp_path)
-            os.remove(temp_path)
+            # Delete user audio immediately after transcription
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
             
             if not user_content:
                 return Response({"error": "Could not transcribe audio"}, status=status.HTTP_400_BAD_REQUEST)
@@ -128,19 +110,25 @@ class MessageListCreateApiView(APIView):
         if not user_content:
             return Response({"error": "No content or audio provided"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # 2. Get AI Response
         assistant_message = handle_user_input(
             session_id=session_id,
             user_content=user_content,
         )
-        audio_url = None
+        
+        # 3. Generate AI Voice (TTS) - FILE-LESS BASE64
+        audio_base64 = None
         try:
-            audio_url = attach_assistant_audio(assistant_message)
+            tts_res = async_to_sync(generate_speech_base64)(assistant_message.content)
+            if tts_res:
+                audio_base64 = tts_res["base64"]
+                # Store voice info in metadata for reference, but no file path
+                metadata = dict(assistant_message.metadata or {})
+                metadata.update({"tts_voice": tts_res["voice"]})
+                assistant_message.metadata = metadata
+                assistant_message.save(update_fields=["metadata"])
         except Exception as exc:
-            logger.exception(
-                "Assistant audio generation failed | message_id=%s | error=%s",
-                assistant_message.id,
-                exc,
-            )
+            logger.exception("Assistant voice generation failed | message_id=%s", assistant_message.id)
 
         messages = get_all_messages_single_session(session_id)
         user_message = messages.filter(sender="user").last()
@@ -149,7 +137,7 @@ class MessageListCreateApiView(APIView):
             {
                 "user_message": ChatMessageSerializer(user_message).data,
                 "assistant_message": ChatMessageSerializer(assistant_message).data,
-                "audio_url": audio_url,
+                "audio_base64": audio_base64,
                 "transcription": user_content if audio_file else None
             },
             status=status.HTTP_201_CREATED,
