@@ -21,6 +21,7 @@ from .services.chat_services import (
 )
 from .services.brain import handle_user_input
 from .services.voice import generate_speech_base64, transcribe_audio
+from .services.plans import get_daily_task, complete_daily_task, activate_plan
 
 logger = logging.getLogger("chat.views")
 
@@ -47,7 +48,7 @@ class SessionListCreateAPIView(APIView):
         )
 
     def post(self, request):
-        logger.info("Session creation initiated | user_id=%s | data=%s", request.user.id, request.data)
+        logger.info("Session creation initiated | user_id=%s", request.user.id)
         serializer = CreateSessionSerializer(data=request.data)
         if not serializer.is_valid():
             logger.error("Session creation validation failed | errors=%s", serializer.errors)
@@ -55,24 +56,25 @@ class SessionListCreateAPIView(APIView):
 
         try:
             validated_data = dict(serializer.validated_data)
+            # Ensure title is never None
             if validated_data.get("title") is None:
                 validated_data["title"] = ""
 
             session = create_session({**validated_data, "user": request.user})
             logger.info("Session created successfully | session_id=%s", session.id)
+            
+            return Response(
+                {
+                    "id": session.id,
+                    "title": session.title,
+                    "status": session.status,
+                    "created_at": session.created_at,
+                },
+                status=status.HTTP_201_CREATED,
+            )
         except Exception as exc:
-            logger.exception("Session creation failed in service: %s", exc)
-            return Response({"error": "Internal server error during session creation"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        return Response(
-            {
-                "id": session.id,
-                "title": session.title,
-                "status": session.status,
-                "created_at": session.created_at,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+            logger.exception("Session creation failed: %s", exc)
+            return Response({"error": "Failed to create session."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class MessageListCreateApiView(APIView):
@@ -89,60 +91,74 @@ class MessageListCreateApiView(APIView):
         audio_file = request.FILES.get("audio")
         temp_path = None
         
-        # 1. Handle audio upload if present
+        # 1. Handle audio upload and transcription
         if audio_file:
-            temp_name = f"input_{uuid.uuid4()}_{audio_file.name}"
-            temp_path = os.path.join(settings.BASE_DIR, "media", "temp", temp_name)
-            os.makedirs(os.path.dirname(temp_path), exist_ok=True)
-            
-            with open(temp_path, 'wb+') as destination:
-                for chunk in audio_file.chunks():
-                    destination.write(chunk)
-            
-            # Use Groq Whisper for quick transcription to text for DB storage
-            # But we pass the raw audio to Gemini for better linguistic analysis
-            user_content = transcribe_audio(temp_path) or user_content
+            try:
+                temp_name = f"input_{uuid.uuid4()}_{audio_file.name}"
+                temp_dir = os.path.join(settings.BASE_DIR, "media", "temp")
+                os.makedirs(temp_dir, exist_ok=True)
+                temp_path = os.path.join(temp_dir, temp_name)
+                
+                with open(temp_path, 'wb+') as destination:
+                    for chunk in audio_file.chunks():
+                        destination.write(chunk)
+                
+                # Transcribe for DB storage and context
+                transcription = transcribe_audio(temp_path)
+                if transcription:
+                    user_content = transcription
+            except Exception as e:
+                logger.error("Error processing uploaded audio: %s", e)
 
+        # 2. Check for empty input
         if not user_content and not audio_file:
             return Response({"error": "No content or audio provided"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 2. Get AI Response (Pass audio_path for Gemini's native hearing)
+        # 3. Get AI Response and cleanup temp files
         try:
             assistant_message = handle_user_input(
                 session_id=session_id,
-                user_content=user_content,
-                audio_path=temp_path
+                user_content=user_content
             )
-        finally:
-            # Cleanup temp audio immediately
-            if temp_path and os.path.exists(temp_path):
-                os.remove(temp_path)
-        
-        # 3. Generate AI Voice (TTS) - FILE-LESS BASE64
-        audio_base64 = None
-        try:
-            tts_res = async_to_sync(generate_speech_base64)(assistant_message.content)
-            if tts_res:
-                audio_base64 = tts_res["base64"]
-                metadata = dict(assistant_message.metadata or {})
-                metadata.update({"tts_voice": tts_res["voice"]})
-                assistant_message.metadata = metadata
-                assistant_message.save(update_fields=["metadata"])
+            
+            # 4. Generate AI Voice (TTS) - FILE-LESS BASE64
+            audio_base64 = None
+            try:
+                tts_res = async_to_sync(generate_speech_base64)(assistant_message.content)
+                if tts_res:
+                    audio_base64 = tts_res["base64"]
+                    # Update metadata with voice info
+                    metadata = dict(assistant_message.metadata or {})
+                    metadata.update({"tts_voice": tts_res["voice"]})
+                    assistant_message.metadata = metadata
+                    assistant_message.save(update_fields=["metadata"])
+            except Exception as exc:
+                logger.exception("Assistant voice generation failed | message_id=%s", assistant_message.id)
+
+            # 5. Fetch full conversation pair for response
+            messages = get_all_messages_single_session(session_id)
+            user_message = messages.filter(sender="user").last()
+
+            return Response(
+                {
+                    "user_message": ChatMessageSerializer(user_message).data,
+                    "assistant_message": ChatMessageSerializer(assistant_message).data,
+                    "audio_base64": audio_base64,
+                    "transcription": user_content if audio_file else None
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
         except Exception as exc:
-            logger.exception("Assistant voice generation failed | message_id=%s", assistant_message.id)
-
-        messages = get_all_messages_single_session(session_id)
-        user_message = messages.filter(sender="user").last()
-
-        return Response(
-            {
-                "user_message": ChatMessageSerializer(user_message).data,
-                "assistant_message": ChatMessageSerializer(assistant_message).data,
-                "audio_base64": audio_base64,
-                "transcription": user_content if audio_file else None
-            },
-            status=status.HTTP_201_CREATED,
-        )
+            logger.exception("Message processing failed: %s", exc)
+            return Response({"error": "Failed to process message."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            # Absolute cleanup of temp audio
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception as cleanup_err:
+                    logger.error("Failed to delete temp file %s: %s", temp_path, cleanup_err)
 
 
 class DailyPlanAPIView(APIView):
@@ -150,8 +166,8 @@ class DailyPlanAPIView(APIView):
 
     def get(self, request):
         data = get_daily_task(request.user)
-        if not data:
-            return Response({"message": "No active plan found."}, status=status.HTTP_404_NOT_FOUND)
+        if not data or not data.get("task"):
+            return Response({"message": "No active plan or task found for today."}, status=status.HTTP_404_NOT_FOUND)
         
         return Response({
             "day": data["day"],
@@ -171,8 +187,12 @@ class ActivatePlanAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, category_id):
-        plan = activate_plan(request.user, category_id)
-        return Response({"message": f"Plan for category {category_id} activated.", "plan_id": plan.id})
+        try:
+            plan = activate_plan(request.user, category_id)
+            return Response({"message": f"Plan for category {category_id} activated.", "plan_id": plan.id})
+        except Exception as e:
+            logger.exception("Plan activation failed: %s", e)
+            return Response({"error": "Could not activate plan."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class CommunityPostAPIView(APIView):
@@ -185,6 +205,8 @@ class CommunityPostAPIView(APIView):
 
     def post(self, request):
         serializer = CommunityPostSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
         CommunityPost.objects.create(content=serializer.validated_data["content"])
         return Response({"message": "Thought shared anonymously."}, status=status.HTTP_201_CREATED)

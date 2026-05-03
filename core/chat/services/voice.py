@@ -3,27 +3,40 @@ import logging
 import base64
 import edge_tts
 from groq import Groq
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger("chat.voice")
 
-# Initialize Groq client
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# Initialize Groq client for Speech-to-Text
+# Engineers: We use Groq's high-speed LPU infrastructure for near-instant transcription.
+# Model: whisper-large-v3-turbo (State-of-the-art for bilingual Bengali/English)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    logger.error("Environment Variable GROQ_API_KEY is missing. transcription will fail.")
+
+client = Groq(api_key=GROQ_API_KEY)
 
 
-def choose_tts_voice(text):
-    # Detection for Bengali characters
-    if any("\u0980" <= ch <= "\u09FF" for ch in text or ""):
+def choose_tts_voice(text: str) -> str:
+    """
+    Selects the best neural voice based on language detection (Bengali vs English).
+    """
+    # Simple range-based Bengali detection (U+0980 to U+09FF)
+    if any("\u0980" <= ch <= "\u09FF" for ch in (text or "")):
         return os.getenv("EDGE_TTS_BN_VOICE", "bn-BD-NabanitaNeural")
     return os.getenv("EDGE_TTS_DEFAULT_VOICE", "en-US-EmmaMultilingualNeural")
 
 
-async def generate_speech_base64(text, voice=None):
+async def generate_speech_base64(text: str, voice: Optional[str] = None) -> Optional[Dict[str, str]]:
     """
-    Generates an MP3 in-memory and returns it as a Base64 encoded string.
-    No files are saved to the backend disk.
+    Generates high-quality speech using Edge TTS and returns a Base64 string.
+    
+    Architecture Design:
+    - Zero Disk I/O: Audio is streamed in-memory and converted to Base64.
+    - Privacy: No sensitive audio files are saved to the server.
     """
     selected_voice = voice or choose_tts_voice(text)
-    logger.info("Generating in-memory TTS | voice=%s | text_preview=%s", selected_voice, (text or "")[:50])
+    logger.info("Starting TTS generation | voice=%s | length=%d", selected_voice, len(text or ""))
     
     try:
         communicate = edge_tts.Communicate(text, selected_voice)
@@ -33,7 +46,7 @@ async def generate_speech_base64(text, voice=None):
                 audio_data += chunk["data"]
         
         if not audio_data:
-            logger.error("TTS generation returned no audio data")
+            logger.warning("Edge TTS returned empty audio buffer")
             return None
             
         return {
@@ -41,27 +54,42 @@ async def generate_speech_base64(text, voice=None):
             "voice": selected_voice
         }
     except Exception as e:
-        logger.error(f"Edge TTS generation failed: {e}")
+        logger.exception("In-memory TTS generation failed: %s", e)
         return None
 
 
-def transcribe_audio(audio_file_path):
+def transcribe_audio(audio_file_path: str) -> Optional[str]:
     """
-    Transcribes audio to text using Groq Whisper.
-    Uses a temp file that is deleted immediately after this call in the view.
+    Transcribes audio to text using Groq's whisper-large-v3-turbo.
+    
+    Reliability Features:
+    - Turbo Speed: Optimized for low-latency conversational AI.
+    - Context Prompt: Injects mental health terminology to reduce transcription errors.
+    - Managed Cleanup: Temp files are expected to be handled by the calling view.
     """
+    if not GROQ_API_KEY:
+        return None
+
     try:
+        if not os.path.exists(audio_file_path):
+            logger.error("Transcription failed: Audio file not found at %s", audio_file_path)
+            return None
+
         with open(audio_file_path, "rb") as file:
-            # We remove language="en" to allow auto-detection for Bengali and other languages.
-            # Adding a prompt helps Whisper recognize emotional/mental health context in Bengali.
+            # Engineers: Using 'whisper-large-v3-turbo' for the best balance of speed and accuracy.
             transcription = client.audio.transcriptions.create(
                 file=(os.path.basename(audio_file_path), file.read()),
-                model="whisper-large-v3",
+                model="whisper-large-v3-turbo",
                 response_format="json",
-                prompt="The user is talking about mental health, emotions, and support. User might speak in English or Bengali (Bangla).",
+                # This prompt acts as a linguistic guide for the model
+                prompt="The user is discussing mental health, feelings, and emotional support in English or Bengali (Bangla).",
                 temperature=0.0
             )
-            return transcription.text
+            
+            text = transcription.text.strip() if transcription and transcription.text else ""
+            logger.info("Groq Turbo transcription successful | char_count=%d", len(text))
+            return text
+
     except Exception as e:
-        logger.error(f"Error transcribing audio: {e}")
+        logger.error("Groq Whisper Turbo API call failed: %s", str(e))
         return None
