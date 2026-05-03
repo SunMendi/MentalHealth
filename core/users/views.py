@@ -20,6 +20,8 @@ from rest_framework_simplejwt.settings import api_settings as jwt_api_settings
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .serializers import UserSerializer
+
 User = get_user_model()
 logger = logging.getLogger("users.views")
 
@@ -248,3 +250,18 @@ class GoogleCallbackView(APIView):
             "refresh": str(refresh),
             "user": {"email": user.email}
         })
+
+
+class UserProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        serializer = UserSerializer(request.user)
+        return Response(serializer.data)
+
+    def patch(self, request):
+        serializer = UserSerializer(request.user, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

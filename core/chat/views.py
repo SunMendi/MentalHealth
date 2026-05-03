@@ -30,6 +30,25 @@ logger = logging.getLogger("chat.views")
 class SessionListCreateAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    def get(self, request):
+        sessions = (
+            request.user.chat_sessions
+            .all()
+            .order_by("-updated_at", "-created_at")
+        )
+        return Response(
+            [
+                {
+                    "id": session.id,
+                    "title": session.title,
+                    "status": session.status,
+                    "created_at": session.created_at,
+                }
+                for session in sessions
+            ],
+            status=status.HTTP_200_OK,
+        )
+
     def post(self, request):
         logger.info("Session creation initiated | user_id=%s | data=%s", request.user.id, request.data)
         serializer = CreateSessionSerializer(data=request.data)
@@ -38,7 +57,11 @@ class SessionListCreateAPIView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            session = create_session({**serializer.validated_data, "user": request.user})
+            validated_data = dict(serializer.validated_data)
+            if validated_data.get("title") is None:
+                validated_data["title"] = ""
+
+            session = create_session({**validated_data, "user": request.user})
             logger.info("Session created successfully | session_id=%s", session.id)
         except Exception as exc:
             logger.exception("Session creation failed in service: %s", exc)
