@@ -1,11 +1,15 @@
 import os
+from datetime import timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR.parent / ".env")
 
-SECRET_KEY = 'django-insecure-&vozo4ff2gu((-v^^*ik&_s(@/usr/bin/bash^izs=5@1l=cab+7x4d!wdhc'
+SECRET_KEY = os.getenv(
+    "DJANGO_SECRET_KEY",
+    "django-insecure-&vozo4ff2gu((-v^^*ik&_s(@/usr/bin/bash^izs=5@1l=cab+7x4d!wdhc",
+)
 DEBUG = True
 ALLOWED_HOSTS = ['*']
 
@@ -91,7 +95,22 @@ USE_TZ = True
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'users.authentication.LoggingJWTAuthentication',
+    ),
+}
+
+SIMPLE_JWT = {
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'VERIFYING_KEY': '',
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    'ACCESS_TOKEN_LIFETIME': timedelta(
+        minutes=int(os.getenv('JWT_ACCESS_TOKEN_LIFETIME_MINUTES', '60'))
+    ),
+    'REFRESH_TOKEN_LIFETIME': timedelta(
+        days=int(os.getenv('JWT_REFRESH_TOKEN_LIFETIME_DAYS', '7'))
     ),
 }
 
@@ -111,5 +130,28 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 STORAGES = {
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s %(levelname)s [%(name)s] %(message)s',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'standard',
+        },
+    },
+    'loggers': {
+        'users': {
+            'handlers': ['console'],
+            'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
     },
 }
