@@ -68,6 +68,7 @@ def transcribe_audio(audio_file_path: str) -> Optional[str]:
     - Managed Cleanup: Temp files are expected to be handled by the calling view.
     """
     if not GROQ_API_KEY:
+        logger.error("STT skipped because GROQ_API_KEY is missing")
         return None
 
     try:
@@ -75,6 +76,7 @@ def transcribe_audio(audio_file_path: str) -> Optional[str]:
             logger.error("Transcription failed: Audio file not found at %s", audio_file_path)
             return None
 
+        logger.info("Starting STT transcription | audio_file_path=%s", audio_file_path)
         with open(audio_file_path, "rb") as file:
             # Engineers: Using 'whisper-large-v3-turbo' for the best balance of speed and accuracy.
             transcription = client.audio.transcriptions.create(
@@ -87,9 +89,13 @@ def transcribe_audio(audio_file_path: str) -> Optional[str]:
             )
             
             text = transcription.text.strip() if transcription and transcription.text else ""
-            logger.info("Groq Turbo transcription successful | char_count=%d", len(text))
+            logger.info(
+                "Groq Turbo transcription successful | char_count=%d | text_preview=%s",
+                len(text),
+                text[:80],
+            )
             return text
 
     except Exception as e:
-        logger.error("Groq Whisper Turbo API call failed: %s", str(e))
+        logger.exception("Groq Whisper Turbo API call failed | audio_file_path=%s | error=%s", audio_file_path, e)
         return None
