@@ -1,7 +1,6 @@
 import os
 import uuid
 from django.conf import settings
-from asgiref.sync import async_to_sync
 from rest_framework import status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -20,12 +19,32 @@ from .services.chat_services import (
 )
 from .services.brain import handle_user_input
 from .services.plans import get_daily_task, complete_daily_task, activate_plan
-from .services.voice import transcribe_audio, generate_speech
+from .services.voice import generate_and_upload_speech, transcribe_audio
 
 
 import logging
 
 logger = logging.getLogger("chat.views")
+
+
+def attach_assistant_audio(assistant_message):
+    if assistant_message.sender != "assistant" or not assistant_message.content:
+        return None
+
+    tts_payload = generate_and_upload_speech(
+        text=assistant_message.content,
+        public_id=f"assistant_message_{assistant_message.id}",
+    )
+    metadata = dict(assistant_message.metadata or {})
+    metadata.update(
+        {
+            "audio_url": tts_payload["audio_url"],
+            "tts_voice": tts_payload["voice"],
+        }
+    )
+    assistant_message.metadata = metadata
+    assistant_message.save(update_fields=["metadata"])
+    return tts_payload["audio_url"]
 
 class SessionListCreateAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -113,16 +132,15 @@ class MessageListCreateApiView(APIView):
             session_id=session_id,
             user_content=user_content,
         )
-        
         audio_url = None
-        if audio_file:
-            audio_name = f"resp_{assistant_message.id}.mp3"
-            audio_dir = os.path.join(settings.BASE_DIR, "media", "responses")
-            os.makedirs(audio_dir, exist_ok=True)
-            audio_path = os.path.join(audio_dir, audio_name)
-            
-            async_to_sync(generate_speech)(assistant_message.content, audio_path)
-            audio_url = f"/media/responses/{audio_name}"
+        try:
+            audio_url = attach_assistant_audio(assistant_message)
+        except Exception as exc:
+            logger.exception(
+                "Assistant audio generation failed | message_id=%s | error=%s",
+                assistant_message.id,
+                exc,
+            )
 
         messages = get_all_messages_single_session(session_id)
         user_message = messages.filter(sender="user").last()

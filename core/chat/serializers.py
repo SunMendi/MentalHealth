@@ -12,6 +12,10 @@ class ChatMessageSerializer(serializers.Serializer):
     suggested_replies = serializers.JSONField(required=False)
     metadata = serializers.JSONField(required=False)
     created_at = serializers.DateTimeField()
+    audio_url = serializers.SerializerMethodField()
+
+    def get_audio_url(self, obj):
+        return (obj.metadata or {}).get("audio_url")
 
 
 class CreateMessageSerializer(serializers.Serializer):
