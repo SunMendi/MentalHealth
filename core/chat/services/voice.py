@@ -1,11 +1,14 @@
 import os
 import hashlib
 import time
+import logging
 from tempfile import NamedTemporaryFile
 
 import edge_tts
 import requests
 from groq import Groq
+
+logger = logging.getLogger("chat.voice")
 
 # Initialize Groq client
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -34,6 +37,7 @@ def _get_cloudinary_config():
     api_secret = os.getenv("CLOUDINARY_API_SECRET")
 
     if cloud_name and api_key and api_secret:
+        logger.info("Cloudinary config found via separate env vars | cloud_name=%s", cloud_name)
         return {
             "cloud_name": cloud_name,
             "api_key": api_key,
@@ -47,6 +51,7 @@ def _get_cloudinary_config():
     credentials_and_host = cloudinary_url[len("cloudinary://"):]
     credentials, cloud_name = credentials_and_host.split("@", 1)
     api_key, api_secret = credentials.split(":", 1)
+    logger.info("Cloudinary config found via CLOUDINARY_URL | cloud_name=%s", cloud_name)
     return {
         "cloud_name": cloud_name,
         "api_key": api_key,
@@ -57,12 +62,19 @@ def _get_cloudinary_config():
 def upload_audio_to_cloudinary(file_path, public_id):
     config = _get_cloudinary_config()
     if not config:
+        logger.error("Cloudinary config missing for audio upload")
         raise RuntimeError("Cloudinary is not configured.")
 
     timestamp = str(int(time.time()))
     params_to_sign = f"folder=mentalhealth_tts&public_id={public_id}&timestamp={timestamp}{config['api_secret']}"
     signature = hashlib.sha1(params_to_sign.encode("utf-8")).hexdigest()
     upload_url = f"https://api.cloudinary.com/v1_1/{config['cloud_name']}/video/upload"
+    logger.info(
+        "Uploading audio to Cloudinary | public_id=%s | cloud_name=%s | file_path=%s",
+        public_id,
+        config["cloud_name"],
+        file_path,
+    )
 
     with open(file_path, "rb") as audio_file:
         response = requests.post(
@@ -81,11 +93,22 @@ def upload_audio_to_cloudinary(file_path, public_id):
 
     response.raise_for_status()
     payload = response.json()
+    logger.info(
+        "Cloudinary upload succeeded | public_id=%s | secure_url=%s",
+        public_id,
+        payload.get("secure_url"),
+    )
     return payload["secure_url"]
 
 
 def generate_and_upload_speech(text, public_id, voice=None):
     selected_voice = voice or choose_tts_voice(text)
+    logger.info(
+        "Starting assistant TTS generation | public_id=%s | voice=%s | text_preview=%s",
+        public_id,
+        selected_voice,
+        (text or "")[:80],
+    )
 
     with NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
         temp_path = tmp_file.name
@@ -94,6 +117,7 @@ def generate_and_upload_speech(text, public_id, voice=None):
         import asyncio
 
         asyncio.run(generate_speech(text, temp_path, selected_voice))
+        logger.info("Edge TTS generation succeeded | public_id=%s | temp_path=%s", public_id, temp_path)
         audio_url = upload_audio_to_cloudinary(temp_path, public_id)
         return {
             "audio_url": audio_url,
