@@ -1,11 +1,10 @@
 import os
-import hashlib
-import time
 import logging
 from tempfile import NamedTemporaryFile
 
+import cloudinary
+import cloudinary.uploader
 import edge_tts
-import requests
 from groq import Groq
 
 logger = logging.getLogger("chat.voice")
@@ -65,10 +64,12 @@ def upload_audio_to_cloudinary(file_path, public_id):
         logger.error("Cloudinary config missing for audio upload")
         raise RuntimeError("Cloudinary is not configured.")
 
-    timestamp = str(int(time.time()))
-    params_to_sign = f"folder=mentalhealth_tts&public_id={public_id}&timestamp={timestamp}{config['api_secret']}"
-    signature = hashlib.sha1(params_to_sign.encode("utf-8")).hexdigest()
-    upload_url = f"https://api.cloudinary.com/v1_1/{config['cloud_name']}/video/upload"
+    cloudinary.config(
+        cloud_name=config["cloud_name"],
+        api_key=config["api_key"],
+        api_secret=config["api_secret"],
+        secure=True,
+    )
     logger.info(
         "Uploading audio to Cloudinary | public_id=%s | cloud_name=%s | file_path=%s",
         public_id,
@@ -76,23 +77,13 @@ def upload_audio_to_cloudinary(file_path, public_id):
         file_path,
     )
 
-    with open(file_path, "rb") as audio_file:
-        response = requests.post(
-            upload_url,
-            data={
-                "api_key": config["api_key"],
-                "timestamp": timestamp,
-                "signature": signature,
-                "folder": "mentalhealth_tts",
-                "public_id": public_id,
-                "resource_type": "video",
-            },
-            files={"file": audio_file},
-            timeout=30,
-        )
-
-    response.raise_for_status()
-    payload = response.json()
+    payload = cloudinary.uploader.upload(
+        file_path,
+        public_id=public_id,
+        folder="mentalhealth_tts",
+        resource_type="video",
+        overwrite=True,
+    )
     logger.info(
         "Cloudinary upload succeeded | public_id=%s | secure_url=%s",
         public_id,
