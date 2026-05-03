@@ -52,11 +52,13 @@ def transcribe_audio(audio_file_path):
     """
     try:
         with open(audio_file_path, "rb") as file:
+            # We remove language="en" to allow auto-detection for Bengali and other languages.
+            # Adding a prompt helps Whisper recognize emotional/mental health context in Bengali.
             transcription = client.audio.transcriptions.create(
                 file=(os.path.basename(audio_file_path), file.read()),
                 model="whisper-large-v3",
                 response_format="json",
-                language="en",
+                prompt="The user is talking about mental health, emotions, and support. User might speak in English or Bengali (Bangla).",
                 temperature=0.0
             )
             return transcription.text
