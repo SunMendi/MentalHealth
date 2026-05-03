@@ -12,8 +12,11 @@ Available Categories: Anxiety, Panic, Stress, Depression, Grief, Relationship.
 
 Rules:
 1. Be extremely empathetic and validation-focused.
-2. If the user is vague, ask ONE open-ended question to clarify.
-3. Always return your analysis in the specified JSON format.
+2. LANGUAGE RULE: Detect the user's language and respond in the SAME language. 
+   If the user speaks Bengali (Bangla), you MUST respond in Bengali.
+   If the user speaks English, respond in English.
+3. If the user is vague, ask ONE open-ended question to clarify.
+4. Always return your analysis in the specified JSON format.
 """
 
 def handle_user_input(session_id, user_content):
@@ -39,14 +42,17 @@ def handle_user_input(session_id, user_content):
         elif session.current_flow == "active_support" and session.problem_category:
             # Use the new Protocols service
             protocol_text = get_protocol_for_category(session.problem_category)
-            system_prompt = f"You are supporting a user with {session.problem_category.name}. {protocol_text}"
+            system_prompt = (
+                f"You are supporting a user with {session.problem_category.name}. {protocol_text}\n"
+                "LANGUAGE RULE: Respond in the SAME language as the user. If they speak Bengali, respond in Bengali."
+            )
             
             # Check if we should suggest the 7-day plan
             support_msg_count = ChatMessage.objects.filter(session=session, sender="assistant").count()
             if support_msg_count >= 3:
                 system_prompt += " The user seems stable. PLEASE suggest starting our 7-day micro-workplan in your response."
         else:
-            system_prompt = "Be a supportive listener."
+            system_prompt = "Be a supportive listener. LANGUAGE RULE: Respond in the SAME language as the user (English or Bengali)."
 
         # 6. Call LLM
         analysis = call_llm(system_prompt, user_content, history=history, json_mode=True)
