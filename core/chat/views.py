@@ -20,7 +20,6 @@ from .services.chat_services import (
     get_all_messages_single_session,
 )
 from .services.brain import handle_user_input
-from .services.plans import get_daily_task, complete_daily_task, activate_plan
 from .services.voice import generate_speech_base64, transcribe_audio
 
 logger = logging.getLogger("chat.views")
@@ -86,12 +85,13 @@ class MessageListCreateApiView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request, session_id):
-        user_content = request.data.get("content")
+        user_content = request.data.get("content", "")
         audio_file = request.FILES.get("audio")
+        temp_path = None
         
-        # 1. Handle user voice input (STT)
+        # 1. Handle audio upload if present
         if audio_file:
-            temp_name = f"temp_{uuid.uuid4()}.wav"
+            temp_name = f"input_{uuid.uuid4()}_{audio_file.name}"
             temp_path = os.path.join(settings.BASE_DIR, "media", "temp", temp_name)
             os.makedirs(os.path.dirname(temp_path), exist_ok=True)
             
@@ -99,22 +99,24 @@ class MessageListCreateApiView(APIView):
                 for chunk in audio_file.chunks():
                     destination.write(chunk)
             
-            user_content = transcribe_audio(temp_path)
-            # Delete user audio immediately after transcription
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            
-            if not user_content:
-                return Response({"error": "Could not transcribe audio"}, status=status.HTTP_400_BAD_REQUEST)
+            # Use Groq Whisper for quick transcription to text for DB storage
+            # But we pass the raw audio to Gemini for better linguistic analysis
+            user_content = transcribe_audio(temp_path) or user_content
 
-        if not user_content:
+        if not user_content and not audio_file:
             return Response({"error": "No content or audio provided"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 2. Get AI Response
-        assistant_message = handle_user_input(
-            session_id=session_id,
-            user_content=user_content,
-        )
+        # 2. Get AI Response (Pass audio_path for Gemini's native hearing)
+        try:
+            assistant_message = handle_user_input(
+                session_id=session_id,
+                user_content=user_content,
+                audio_path=temp_path
+            )
+        finally:
+            # Cleanup temp audio immediately
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
         
         # 3. Generate AI Voice (TTS) - FILE-LESS BASE64
         audio_base64 = None
@@ -122,7 +124,6 @@ class MessageListCreateApiView(APIView):
             tts_res = async_to_sync(generate_speech_base64)(assistant_message.content)
             if tts_res:
                 audio_base64 = tts_res["base64"]
-                # Store voice info in metadata for reference, but no file path
                 metadata = dict(assistant_message.metadata or {})
                 metadata.update({"tts_voice": tts_res["voice"]})
                 assistant_message.metadata = metadata

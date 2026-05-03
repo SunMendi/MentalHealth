@@ -1,62 +1,87 @@
 import os
 import json
-from groq import Groq
+import logging
+import google.generativeai as genai
+from typing import Dict, Any, List, Optional
 
-# Initialize client - Groq SDK handles the base URL correctly by default.
-# We explicitly set base_url to None to avoid environment variable interference.
-client = Groq(
-    api_key=os.getenv("GROQ_API_KEY"),
-    base_url=None 
-)
+logger = logging.getLogger("chat.llm")
 
-def call_llm(system_prompt, user_message, history=None, json_mode=True):
+# Initialize Gemini Client
+# Engineers: We use the Google Generative AI SDK for robust multimodal support.
+# Documentation: https://ai.google.dev/gemini-api/docs
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+else:
+    logger.warning("GEMINI_API_KEY is missing from environment variables.")
+
+def call_gemini(system_prompt: str, user_message: str, audio_path: Optional[str] = None, history: List[Dict[str, str]] = None) -> Dict[str, Any]:
     """
-    Calls the Groq API using Llama 3 models.
-    """
-    messages = [
-        {"role": "system", "content": system_prompt},
-    ]
+    Calls Google Gemini 2.0 Flash with optional audio support.
     
-    # Add history if provided (not implemented in brain.py yet, but ready)
-    if history:
-        messages.extend(history)
-        
-    messages.append({"role": "user", "content": user_message})
-
-    # Add mandatory JSON formatting instruction to system prompt if in json_mode
-    if json_mode:
-        json_instruction = """
-        IMPORTANT: Your entire response must be a single valid JSON object with these keys:
-        {
-          "empathetic_response": "string (The text the user will see)",
-          "detected_category": "string or null (One of: Anxiety, Panic, Stress, Depression, Grief, Relationship)",
-          "confidence_score": "float (0.0 to 1.0)",
-          "suggested_buttons": ["string", "string"],
-          "is_crisis": "boolean"
-        }
-        """
-        messages[0]["content"] += json_instruction
-
+    This function is designed to be:
+    1. Multimodal: Can process audio directly for native-level Bengali recognition.
+    2. Reliable: Includes structured JSON parsing and graceful error handling.
+    3. Managable: Follows standard Python typing and clean logging.
+    """
     try:
-        completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            response_format={"type": "json_object"} if json_mode else None,
-            temperature=0.7,
-            max_tokens=1024,
+        model = genai.GenerativeModel(
+            model_name="gemini-2.0-flash",
+            system_instruction=system_prompt
         )
+
+        # Build the prompt parts
+        prompt_parts = []
         
-        response_content = completion.choices[0].message.content
+        # Add audio if provided (This is the key for perfect Bengali STT)
+        if audio_path and os.path.exists(audio_path):
+            with open(audio_path, "rb") as f:
+                audio_bytes = f.read()
+                # Determine mime type based on extension (simple way)
+                mime_type = "audio/wav"
+                if audio_path.endswith(".mp3"): mime_type = "audio/mpeg"
+                elif audio_path.endswith(".webm"): mime_type = "audio/webm"
+                
+                prompt_parts.append({
+                    "mime_type": mime_type,
+                    "data": audio_bytes
+                })
         
-        if json_mode:
-            return json.loads(response_content)
-        return response_content
+        # Add text history context
+        if history:
+            # Engineers: Gemini works best when history is provided as clear conversational turns.
+            context_str = "Conversation History:\n"
+            for msg in history:
+                context_str += f"{msg['role'].capitalize()}: {msg['content']}\n"
+            prompt_parts.append(f"{context_str}\nUser's current message: {user_message}")
+        else:
+            prompt_parts.append(user_message)
+
+        # Configure JSON response format
+        generation_config = {
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "top_k": 40,
+            "max_output_tokens": 1024,
+            "response_mime_type": "application/json",
+        }
+
+        response = model.generate_content(
+            prompt_parts,
+            generation_config=generation_config
+        )
+
+        # Parse and return JSON
+        if not response or not response.text:
+            raise ValueError("Empty response from Gemini API")
+
+        return json.loads(response.text)
 
     except Exception as e:
-        print(f"Error calling Groq: {e}")
-        # Fallback safe response
+        logger.exception("Gemini API call failed: %s", e)
+        # Professional fallback response to prevent frontend crashes
         return {
-            "empathetic_response": "I'm here for you, but I'm having a little trouble connecting right now. Can you tell me more about how you're feeling?",
+            "empathetic_response": "I'm here for you, but I'm having a little trouble with my connection. Could you repeat that? (Bengali: আমি আপনার সাথে আছি, কিন্তু সংযোগে কিছুটা সমস্যা হচ্ছে।)",
             "detected_category": None,
             "confidence_score": 0.0,
             "suggested_buttons": ["Try again"],

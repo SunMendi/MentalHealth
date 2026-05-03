@@ -1,5 +1,5 @@
 from ..models import ChatSession, ProblemCategory, ChatMessage
-from .llm import call_llm
+from .llm import call_gemini
 from .chat_services import create_user_message, create_assistant_message
 from .safety import check_for_crisis, get_emergency_response
 from .protocols import get_protocol_for_category
@@ -12,14 +12,17 @@ Available Categories: Anxiety, Panic, Stress, Depression, Grief, Relationship.
 
 Rules:
 1. Be extremely empathetic and validation-focused.
-2. LANGUAGE RULE: Detect the user's language and respond in the SAME language. 
-   If the user speaks Bengali (Bangla), you MUST respond in Bengali.
-   If the user speaks English, respond in English.
+2. LANGUAGE RULE: Detect the user's language (English or Bengali) and respond in the SAME language. 
+   If the user speaks Bengali (Bangla), you MUST respond in Bengali characters.
 3. If the user is vague, ask ONE open-ended question to clarify.
 4. Always return your analysis in the specified JSON format.
 """
 
-def handle_user_input(session_id, user_content):
+def handle_user_input(session_id, user_content, audio_path=None):
+    """
+    Orchestrates the response generation. 
+    Now supports direct audio input for native-level Bengali support via Gemini.
+    """
     # 1. Fetch Session
     session = ChatSession.objects.get(id=session_id)
     
@@ -32,37 +35,42 @@ def handle_user_input(session_id, user_content):
         # 3. Save User Message
         create_user_message(session_id, user_content)
         
-        # 4. Prepare History for LLM
+        # 4. Prepare History for context
         history_msgs = ChatMessage.objects.filter(session=session).order_by('created_at')[:10]
         history = [{"role": msg.sender, "content": msg.content} for msg in history_msgs]
         
-        # 5. Choose Prompt based on Flow
+        # 5. Select Strategy based on Flow
         if session.current_flow == "discovery":
             system_prompt = INTAKE_SYSTEM_PROMPT
         elif session.current_flow == "active_support" and session.problem_category:
-            # Use the new Protocols service
             protocol_text = get_protocol_for_category(session.problem_category)
             system_prompt = (
                 f"You are supporting a user with {session.problem_category.name}. {protocol_text}\n"
-                "LANGUAGE RULE: Respond in the SAME language as the user. If they speak Bengali, respond in Bengali."
+                "LANGUAGE RULE: Respond in the SAME language as the user. If they speak Bengali, respond in Bengali characters."
             )
             
-            # Check if we should suggest the 7-day plan
+            # Contextual suggestions
             support_msg_count = ChatMessage.objects.filter(session=session, sender="assistant").count()
             if support_msg_count >= 3:
-                system_prompt += " The user seems stable. PLEASE suggest starting our 7-day micro-workplan in your response."
+                system_prompt += " Suggest starting our 7-day micro-workplan if the user feels ready."
         else:
-            system_prompt = "Be a supportive listener. LANGUAGE RULE: Respond in the SAME language as the user (English or Bengali)."
+            system_prompt = "Be a supportive listener. Detect and match the user's language (Bengali or English)."
 
-        # 6. Call LLM
-        analysis = call_llm(system_prompt, user_content, history=history, json_mode=True)
+        # 6. Call Gemini Multimodal
+        # Note: We pass audio_path so Gemini can "hear" the native Bengali directly.
+        analysis = call_gemini(
+            system_prompt=system_prompt, 
+            user_message=user_content, 
+            audio_path=audio_path,
+            history=history
+        )
     
-    # 7. Handle Crisis
+    # 7. Crisis Handling
     if analysis.get("is_crisis"):
         session.current_flow = "crisis"
         session.save()
 
-    # 8. Update State if Category found with high confidence
+    # 8. Category Transition Logic
     detected_cat_name = analysis.get("detected_category")
     confidence = analysis.get("confidence_score", 0)
     
@@ -73,7 +81,7 @@ def handle_user_input(session_id, user_content):
             session.current_flow = "active_support"
             session.save()
 
-    # 9. Save and Return Assistant Message
+    # 9. Return the complete response
     return create_assistant_message(
         session_id,
         content=analysis.get("empathetic_response"),
