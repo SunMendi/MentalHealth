@@ -3,12 +3,13 @@ import uuid
 import logging
 from asgiref.sync import async_to_sync
 from django.conf import settings
+from django.shortcuts import get_object_or_404
 from rest_framework import status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-from .models import CommunityPost
+from .models import ChatSession, CommunityPost
 from .serializers import (
     ChatMessageSerializer,
     CreateMessageSerializer,
@@ -127,6 +128,16 @@ class SessionListCreateAPIView(APIView):
         except Exception as exc:
             logger.exception("Session creation failed: %s", exc)
             return Response({"error": "Failed to create session."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class SessionDetailAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, session_id):
+        session = get_object_or_404(ChatSession, id=session_id, user=request.user)
+        logger.info("Session deletion initiated | user_id=%s | session_id=%s", request.user.id, session.id)
+        session.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class MessageListCreateApiView(APIView):

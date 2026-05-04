@@ -2,6 +2,7 @@ from django.urls import path
 from .views import (
     AudioTranscriptionAPIView,
     SessionListCreateAPIView, 
+    SessionDetailAPIView,
     MessageListCreateApiView, 
     DailyPlanAPIView, 
     ActivatePlanAPIView,
@@ -14,6 +15,8 @@ urlpatterns = [
     path('voice/transcribe', AudioTranscriptionAPIView.as_view()),
     path('chat/sessions/', SessionListCreateAPIView.as_view(), name='chat'),
     path('chat/sessions', SessionListCreateAPIView.as_view()),
+    path('chat/sessions/<int:session_id>/', SessionDetailAPIView.as_view(), name='session-detail'),
+    path('chat/sessions/<int:session_id>', SessionDetailAPIView.as_view()),
     path('chat/sessions/<int:session_id>/messages/', MessageListCreateApiView.as_view(), name='message'),
     path('chat/sessions/<int:session_id>/messages', MessageListCreateApiView.as_view()),
     path('plan/daily/', DailyPlanAPIView.as_view(), name='daily-plan'),
