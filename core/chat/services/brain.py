@@ -3,21 +3,24 @@ from .llm import call_llm
 from .chat_services import create_user_message, create_assistant_message
 from .safety import check_for_crisis, get_emergency_response
 from .protocols import get_protocol_for_category
+from .plans import activate_plan
 
 INTAKE_SYSTEM_PROMPT_TEMPLATE = """
 You are a compassionate, non-judgmental clinical intake assistant for a mental health app. 
-Your goal is to validate the user's feelings and identify their primary concern.
+Your goal is to validate the user's feelings and gather enough context to identify their primary concern.
 
 Available Categories from our support database:
 {category_list}
 
 Rules:
-1. Be extremely empathetic and validation-focused.
+1. Be extremely empathetic and validation-focused. Use active listening.
 2. LANGUAGE RULE: Detect the user's language (English or Bengali) and respond in the SAME language. 
    If the user speaks Bengali (Bangla), you MUST respond in Bengali characters.
-3. If the user is vague, ask ONE open-ended question to clarify.
-4. For detected_category, use exactly one category name from the database list above, or null if unclear.
-5. Always return your analysis in the specified JSON format.
+3. DISCOVERY LOOP: If the user is vague or you don't have enough context to pick a category with high confidence, 
+   ask ONE empathetic, open-ended follow-up question to understand the root of the problem.
+4. DO NOT guess a category. Keep detected_category as null until you are very sure.
+5. If the user provides specific details that match a category, select that category.
+6. Always return your analysis in the specified JSON format.
 """
 
 
@@ -99,22 +102,38 @@ def handle_user_input(session_id, user_content, audio_path=None):
         session.current_flow = "crisis"
         session.save()
 
-    # 8. Category Transition Logic
+    # 8. Category Transition Logic (The Pivot)
     detected_cat_name = analysis.get("detected_category")
     confidence = analysis.get("confidence_score", 0)
     
     if detected_cat_name and confidence > 0.8 and session.current_flow == "discovery":
         category = _find_problem_category(detected_cat_name)
         if category:
+            # Acknowledge the problem and trigger the plan
             session.problem_category = category
             session.current_flow = "active_support"
             session.save()
+            
+            # AUTOMATED PLAN ACTIVATION
+            try:
+                activate_plan(session.user, category.id)
+                logger.info("7-day plan automatically activated | user_id=%s | category=%s", session.user.id, category.name)
+            except Exception as e:
+                logger.error("Failed to auto-activate plan: %s", e)
+
+            # Protocol-driven response for immediate relief
             protocol_text = get_protocol_for_category(category)
             support_prompt = (
-                f"You are supporting a user with {category.name}. {protocol_text}\n"
-                "LANGUAGE RULE: Respond in the SAME language as the user. If they speak Bengali, respond in Bengali characters.\n"
-                "Keep the response short, practical, and guided. Start with one small next step."
+                f"You have identified that the user is dealing with {category.name}. "
+                f"Acknowledge this clearly and empathetically (e.g., 'It sounds like you're going through {category.name}...'). "
+                f"Briefly mention that you've started a gentle 7-day plan to support them over time, "
+                f"but for right now, you want to help them with the immediate moment using this protocol:\n\n"
+                f"{protocol_text}\n\n"
+                f"Rules:\n"
+                f"1. Be practical and guided. Start with only the FIRST step of the protocol.\n"
+                f"2. LANGUAGE RULE: Respond in the SAME language as the user (Bengali characters for Bengali).\n"
             )
+            
             analysis = call_llm(
                 system_prompt=support_prompt,
                 user_message=user_content,

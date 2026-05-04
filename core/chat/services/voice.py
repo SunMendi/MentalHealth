@@ -3,19 +3,23 @@ import logging
 import base64
 import edge_tts
 from typing import Dict, Optional
-from elevenlabs.client import ElevenLabs
+from groq import Groq
 
 logger = logging.getLogger("chat.voice")
 
-# Use scribe_v1 as default for broader compatibility
-ELEVENLABS_STT_MODEL = os.getenv("ELEVENLABS_STT_MODEL", "scribe_v1")
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip().strip("\"'")
+# TTS Settings (Edge TTS)
+EDGE_TTS_DEFAULT_VOICE = os.getenv("EDGE_TTS_DEFAULT_VOICE", "en-US-EmmaMultilingualNeural")
+EDGE_TTS_BN_VOICE = os.getenv("EDGE_TTS_BN_VOICE", "bn-BD-NabanitaNeural")
 
-if not ELEVENLABS_API_KEY:
-    logger.error("Environment Variable ELEVENLABS_API_KEY is missing. transcription will fail.")
+# STT Settings (Groq Whisper)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3")
 
-# Initialize official ElevenLabs client
-client = ElevenLabs(api_key=ELEVENLABS_API_KEY) if ELEVENLABS_API_KEY else None
+if not GROQ_API_KEY:
+    logger.error("Environment Variable GROQ_API_KEY is missing. Transcription will fail.")
+
+# Groq Client Initialization
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 
 def _mask_key(key: str) -> str:
@@ -31,8 +35,8 @@ def choose_tts_voice(text: str) -> str:
     Selects the best neural voice based on language detection (Bengali vs English).
     """
     if any("\u0980" <= ch <= "\u09FF" for ch in (text or "")):
-        return os.getenv("EDGE_TTS_BN_VOICE", "bn-BD-NabanitaNeural")
-    return os.getenv("EDGE_TTS_DEFAULT_VOICE", "en-US-EmmaMultilingualNeural")
+        return EDGE_TTS_BN_VOICE
+    return EDGE_TTS_DEFAULT_VOICE
 
 
 async def generate_speech_base64(text: str, voice: Optional[str] = None) -> Optional[Dict[str, str]]:
@@ -64,10 +68,14 @@ async def generate_speech_base64(text: str, voice: Optional[str] = None) -> Opti
 
 def transcribe_audio(audio_file_path: str) -> Optional[str]:
     """
-    Transcribes audio to text using the official ElevenLabs Python SDK.
+    Transcribes audio to text using Groq Whisper.
+    
+    Reliability Features:
+    - Whisper Large V3: High accuracy for mixed English/Bengali speech.
+    - Cloud Optimized: Bypasses IP blocks that affect ElevenLabs Free Tier.
     """
-    if not client:
-        logger.error("STT skipped because ElevenLabs client is not initialized")
+    if not groq_client:
+        logger.error("STT skipped because GROQ_API_KEY is missing")
         return None
 
     try:
@@ -76,29 +84,22 @@ def transcribe_audio(audio_file_path: str) -> Optional[str]:
             return None
 
         logger.info(
-            "Starting ElevenLabs SDK STT | model=%s | file=%s | key_hint=%s",
-            ELEVENLABS_STT_MODEL,
+            "Starting Groq STT transcription | model=%s | file=%s",
+            GROQ_STT_MODEL,
             os.path.basename(audio_file_path),
-            _mask_key(ELEVENLABS_API_KEY),
         )
 
-        with open(audio_file_path, "rb") as f:
-            transcription = client.speech_to_text.convert(
-                file=f,
-                model_id="scribe_v2",
-                tag_audio_events=True,
-                diarize=True,
-                language_code=None, # Auto-detect for Bengali/English support
+        with open(audio_file_path, "rb") as file:
+            transcription = groq_client.audio.transcriptions.create(
+                file=(os.path.basename(audio_file_path), file.read()),
+                model=GROQ_STT_MODEL,
+                response_format="json",
             )
             
             text = (transcription.text or "").strip()
-            logger.info("ElevenLabs SDK transcription success | text_preview=%s", text[:50])
+            logger.info("Groq transcription success | text_preview=%s", text[:50])
             return text
 
     except Exception as e:
-        logger.exception(
-            "ElevenLabs SDK transcription failed | file=%s | error=%s",
-            os.path.basename(audio_file_path),
-            e
-        )
+        logger.exception("Groq transcription failed | file=%s | error=%s", os.path.basename(audio_file_path), e)
         return None
