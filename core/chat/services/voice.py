@@ -1,9 +1,10 @@
-import os
-import logging
 import base64
-import edge_tts
+import logging
+import os
 from typing import Dict, Optional
-from groq import Groq
+
+import edge_tts
+import requests
 
 logger = logging.getLogger("chat.voice")
 
@@ -11,15 +12,18 @@ logger = logging.getLogger("chat.voice")
 EDGE_TTS_DEFAULT_VOICE = os.getenv("EDGE_TTS_DEFAULT_VOICE", "en-US-EmmaMultilingualNeural")
 EDGE_TTS_BN_VOICE = os.getenv("EDGE_TTS_BN_VOICE", "bn-BD-NabanitaNeural")
 
-# STT Settings (Groq Whisper)
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3")
+# STT Settings (ElevenLabs)
+ELEVENLABS_STT_URL = "https://api.elevenlabs.io/v1/speech-to-text"
+ELEVENLABS_STT_MODEL = os.getenv("ELEVENLABS_STT_MODEL", "scribe_v2")
+ELEVENLABS_STT_TIMEOUT_SECONDS = int(os.getenv("ELEVENLABS_STT_TIMEOUT_SECONDS", "60"))
 
-if not GROQ_API_KEY:
-    logger.error("Environment Variable GROQ_API_KEY is missing. Transcription will fail.")
+if not os.getenv("ELEVENLABS_API_KEY"):
+    logger.error("Environment Variable ELEVENLABS_API_KEY is missing. Transcription will fail.")
 
-# Groq Client Initialization
-groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
+def _get_elevenlabs_api_key() -> str:
+    raw_key = os.getenv("ELEVENLABS_API_KEY", "")
+    return raw_key.strip().strip("\"'")
 
 
 def _mask_key(key: str) -> str:
@@ -45,37 +49,34 @@ async def generate_speech_base64(text: str, voice: Optional[str] = None) -> Opti
     """
     selected_voice = voice or choose_tts_voice(text)
     logger.info("Starting TTS generation | voice=%s | length=%d", selected_voice, len(text or ""))
-    
+
     try:
         communicate = edge_tts.Communicate(text, selected_voice)
         audio_data = b""
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 audio_data += chunk["data"]
-        
+
         if not audio_data:
             logger.warning("Edge TTS returned empty audio buffer")
             return None
-            
+
         return {
             "base64": base64.b64encode(audio_data).decode("utf-8"),
-            "voice": selected_voice
+            "voice": selected_voice,
         }
-    except Exception as e:
-        logger.exception("In-memory TTS generation failed: %s", e)
+    except Exception as exc:
+        logger.exception("In-memory TTS generation failed: %s", exc)
         return None
 
 
 def transcribe_audio(audio_file_path: str) -> Optional[str]:
     """
-    Transcribes audio to text using Groq Whisper.
-    
-    Reliability Features:
-    - Whisper Large V3: High accuracy for mixed English/Bengali speech.
-    - Cloud Optimized: Bypasses IP blocks that affect ElevenLabs Free Tier.
+    Transcribes audio to text using ElevenLabs Speech-to-Text.
     """
-    if not groq_client:
-        logger.error("STT skipped because GROQ_API_KEY is missing")
+    api_key = _get_elevenlabs_api_key()
+    if not api_key:
+        logger.error("STT skipped because ELEVENLABS_API_KEY is missing")
         return None
 
     try:
@@ -84,22 +85,58 @@ def transcribe_audio(audio_file_path: str) -> Optional[str]:
             return None
 
         logger.info(
-            "Starting Groq STT transcription | model=%s | file=%s",
-            GROQ_STT_MODEL,
+            "Starting ElevenLabs STT transcription | model=%s | file=%s | key_hint=%s",
+            ELEVENLABS_STT_MODEL,
             os.path.basename(audio_file_path),
+            _mask_key(api_key),
         )
 
-        with open(audio_file_path, "rb") as file:
-            transcription = groq_client.audio.transcriptions.create(
-                file=(os.path.basename(audio_file_path), file.read()),
-                model=GROQ_STT_MODEL,
-                response_format="json",
-            )
-            
-            text = (transcription.text or "").strip()
-            logger.info("Groq transcription success | text_preview=%s", text[:50])
-            return text
+        with open(audio_file_path, "rb") as audio_file:
+            data = {
+                "model_id": ELEVENLABS_STT_MODEL,
+                "diarize": "false",
+                "tag_audio_events": "false",
+            }
+            language_code = os.getenv("ELEVENLABS_STT_LANGUAGE_CODE")
+            if language_code:
+                data["language_code"] = language_code
 
-    except Exception as e:
-        logger.exception("Groq transcription failed | file=%s | error=%s", os.path.basename(audio_file_path), e)
+            response = requests.post(
+                ELEVENLABS_STT_URL,
+                headers={"xi-api-key": api_key},
+                data=data,
+                files={
+                    "file": (
+                        os.path.basename(audio_file_path),
+                        audio_file,
+                        "application/octet-stream",
+                    )
+                },
+                timeout=ELEVENLABS_STT_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+
+        payload = response.json()
+        text = (payload.get("text") or "").strip()
+        logger.info("ElevenLabs transcription success | text_preview=%s", text[:80])
+        return text
+
+    except requests.RequestException as exc:
+        response_text = getattr(exc.response, "text", "") if getattr(exc, "response", None) else ""
+        status_code = getattr(exc.response, "status_code", None) if getattr(exc, "response", None) else None
+        logger.exception(
+            "ElevenLabs STT API call failed | file=%s | status_code=%s | key_hint=%s | error=%s | response=%s",
+            os.path.basename(audio_file_path),
+            status_code,
+            _mask_key(api_key),
+            exc,
+            response_text[:500],
+        )
+        return None
+    except Exception as exc:
+        logger.exception(
+            "ElevenLabs transcription failed | file=%s | error=%s",
+            os.path.basename(audio_file_path),
+            exc,
+        )
         return None

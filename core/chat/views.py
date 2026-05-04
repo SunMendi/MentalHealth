@@ -145,11 +145,13 @@ class MessageListCreateApiView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, session_id):
+        get_object_or_404(ChatSession, id=session_id, user=request.user)
         messages = get_all_messages_single_session(session_id)
         serializer = ChatMessageSerializer(messages, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request, session_id):
+        session = get_object_or_404(ChatSession, id=session_id, user=request.user)
         user_content = request.data.get("content", "")
         audio_file = request.FILES.get("audio")
         temp_path = None
@@ -173,7 +175,7 @@ class MessageListCreateApiView(APIView):
         # 3. Get AI Response and cleanup temp files
         try:
             assistant_message = handle_user_input(
-                session_id=session_id,
+                session_id=session.id,
                 user_content=user_content
             )
             
@@ -192,7 +194,7 @@ class MessageListCreateApiView(APIView):
                 logger.exception("Assistant voice generation failed | message_id=%s", assistant_message.id)
 
             # 5. Fetch full conversation pair for response
-            messages = get_all_messages_single_session(session_id)
+            messages = get_all_messages_single_session(session.id)
             user_message = messages.filter(sender="user").last()
 
             return Response(
