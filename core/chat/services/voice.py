@@ -7,7 +7,7 @@ from typing import Dict, Optional
 
 logger = logging.getLogger("chat.voice")
 
-ELEVENLABS_STT_MODEL = os.getenv("ELEVENLABS_STT_MODEL", "scribe_v2")
+ELEVENLABS_STT_MODEL = os.getenv("ELEVENLABS_STT_MODEL", "scribe_v1")
 ELEVENLABS_STT_URL = "https://api.elevenlabs.io/v1/speech-to-text"
 ELEVENLABS_STT_TIMEOUT_SECONDS = int(os.getenv("ELEVENLABS_STT_TIMEOUT_SECONDS", "60"))
 
@@ -117,12 +117,20 @@ def transcribe_audio(audio_file_path: str) -> Optional[str]:
                     "file": (
                         os.path.basename(audio_file_path),
                         file,
-                        "application/octet-stream",
+                        "audio/webm" if audio_file_path.endswith(".webm") else "application/octet-stream",
                     )
                 },
                 timeout=ELEVENLABS_STT_TIMEOUT_SECONDS,
             )
-            response.raise_for_status()
+            
+            if response.status_code != 200:
+                logger.error(
+                    "ElevenLabs STT failed | status=%d | response=%s | key_hint=%s",
+                    response.status_code,
+                    response.text,
+                    _mask_key(api_key)
+                )
+                response.raise_for_status()
 
             payload = response.json()
             text = (payload.get("text") or "").strip()
