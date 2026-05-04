@@ -2,19 +2,18 @@ import os
 import logging
 import base64
 import edge_tts
-from groq import Groq
-from typing import Dict, Any, Optional
+import requests
+from typing import Dict, Optional
 
 logger = logging.getLogger("chat.voice")
 
-# Initialize Groq client for Speech-to-Text
-# Engineers: We use Groq's high-speed LPU infrastructure for near-instant transcription.
-# Model: whisper-large-v3-turbo (State-of-the-art for bilingual Bengali/English)
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    logger.error("Environment Variable GROQ_API_KEY is missing. transcription will fail.")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+ELEVENLABS_STT_MODEL = os.getenv("ELEVENLABS_STT_MODEL", "scribe_v2")
+ELEVENLABS_STT_URL = "https://api.elevenlabs.io/v1/speech-to-text"
+ELEVENLABS_STT_TIMEOUT_SECONDS = int(os.getenv("ELEVENLABS_STT_TIMEOUT_SECONDS", "60"))
 
-client = Groq(api_key=GROQ_API_KEY)
+if not ELEVENLABS_API_KEY:
+    logger.error("Environment Variable ELEVENLABS_API_KEY is missing. transcription will fail.")
 
 
 def choose_tts_voice(text: str) -> str:
@@ -60,15 +59,15 @@ async def generate_speech_base64(text: str, voice: Optional[str] = None) -> Opti
 
 def transcribe_audio(audio_file_path: str) -> Optional[str]:
     """
-    Transcribes audio to text using Groq's whisper-large-v3-turbo.
+    Transcribes audio to text using ElevenLabs Speech-to-Text.
     
     Reliability Features:
-    - Turbo Speed: Optimized for low-latency conversational AI.
-    - Context Prompt: Injects mental health terminology to reduce transcription errors.
+    - Scribe v2: Accurate multilingual transcription for Bengali/English voice input.
+    - Auto Language Detection: Lets mixed Bangla/English speech route through one path.
     - Managed Cleanup: Temp files are expected to be handled by the calling view.
     """
-    if not GROQ_API_KEY:
-        logger.error("STT skipped because GROQ_API_KEY is missing")
+    if not ELEVENLABS_API_KEY:
+        logger.error("STT skipped because ELEVENLABS_API_KEY is missing")
         return None
 
     try:
@@ -76,26 +75,55 @@ def transcribe_audio(audio_file_path: str) -> Optional[str]:
             logger.error("Transcription failed: Audio file not found at %s", audio_file_path)
             return None
 
-        logger.info("Starting STT transcription | audio_file_path=%s", audio_file_path)
+        logger.info(
+            "Starting ElevenLabs STT transcription | model=%s | audio_file_path=%s",
+            ELEVENLABS_STT_MODEL,
+            audio_file_path,
+        )
         with open(audio_file_path, "rb") as file:
-            # Engineers: Using 'whisper-large-v3-turbo' for the best balance of speed and accuracy.
-            transcription = client.audio.transcriptions.create(
-                file=(os.path.basename(audio_file_path), file.read()),
-                model="whisper-large-v3-turbo",
-                response_format="json",
-                # This prompt acts as a linguistic guide for the model
-                prompt="The user is discussing mental health, feelings, and emotional support in English or Bengali (Bangla).",
-                temperature=0.0
+            data = {
+                "model_id": ELEVENLABS_STT_MODEL,
+                "tag_audio_events": "false",
+                "diarize": "false",
+                "timestamps_granularity": "none",
+            }
+            language_code = os.getenv("ELEVENLABS_STT_LANGUAGE_CODE")
+            if language_code:
+                data["language_code"] = language_code
+
+            response = requests.post(
+                ELEVENLABS_STT_URL,
+                headers={"xi-api-key": ELEVENLABS_API_KEY},
+                data=data,
+                files={
+                    "file": (
+                        os.path.basename(audio_file_path),
+                        file,
+                        "application/octet-stream",
+                    )
+                },
+                timeout=ELEVENLABS_STT_TIMEOUT_SECONDS,
             )
-            
-            text = transcription.text.strip() if transcription and transcription.text else ""
+            response.raise_for_status()
+
+            payload = response.json()
+            text = (payload.get("text") or "").strip()
             logger.info(
-                "Groq Turbo transcription successful | char_count=%d | text_preview=%s",
+                "ElevenLabs transcription successful | char_count=%d | text_preview=%s",
                 len(text),
                 text[:80],
             )
             return text
 
+    except requests.RequestException as e:
+        response_text = getattr(e.response, "text", "") if getattr(e, "response", None) else ""
+        logger.exception(
+            "ElevenLabs STT API call failed | audio_file_path=%s | error=%s | response=%s",
+            audio_file_path,
+            e,
+            response_text[:500],
+        )
+        return None
     except Exception as e:
-        logger.exception("Groq Whisper Turbo API call failed | audio_file_path=%s | error=%s", audio_file_path, e)
+        logger.exception("ElevenLabs transcription failed | audio_file_path=%s | error=%s", audio_file_path, e)
         return None

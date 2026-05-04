@@ -4,19 +4,50 @@ from .chat_services import create_user_message, create_assistant_message
 from .safety import check_for_crisis, get_emergency_response
 from .protocols import get_protocol_for_category
 
-INTAKE_SYSTEM_PROMPT = """
+INTAKE_SYSTEM_PROMPT_TEMPLATE = """
 You are a compassionate, non-judgmental clinical intake assistant for a mental health app. 
 Your goal is to validate the user's feelings and identify their primary concern.
 
-Available Categories: Anxiety, Panic, Stress, Depression, Grief, Relationship.
+Available Categories from our support database:
+{category_list}
 
 Rules:
 1. Be extremely empathetic and validation-focused.
 2. LANGUAGE RULE: Detect the user's language (English or Bengali) and respond in the SAME language. 
    If the user speaks Bengali (Bangla), you MUST respond in Bengali characters.
 3. If the user is vague, ask ONE open-ended question to clarify.
-4. Always return your analysis in the specified JSON format.
+4. For detected_category, use exactly one category name from the database list above, or null if unclear.
+5. Always return your analysis in the specified JSON format.
 """
+
+
+def _build_category_context() -> str:
+    categories = ProblemCategory.objects.all().order_by("name")
+    if not categories:
+        return "- General: broad emotional support when no category data is available"
+
+    return "\n".join(
+        f"- {category.name}: {category.description or 'No description provided.'}"
+        for category in categories
+    )
+
+
+def _get_intake_system_prompt() -> str:
+    return INTAKE_SYSTEM_PROMPT_TEMPLATE.format(category_list=_build_category_context())
+
+
+def _find_problem_category(category_name):
+    if not category_name:
+        return None
+
+    normalized_name = str(category_name).strip()
+    category = ProblemCategory.objects.filter(name__iexact=normalized_name).first()
+    if category:
+        return category
+
+    # Safety net for older model outputs like "Anxiety" when DB has "General Anxiety".
+    return ProblemCategory.objects.filter(name__icontains=normalized_name).first()
+
 
 def handle_user_input(session_id, user_content, audio_path=None):
     """
@@ -24,6 +55,7 @@ def handle_user_input(session_id, user_content, audio_path=None):
     """
     # 1. Fetch Session
     session = ChatSession.objects.get(id=session_id)
+    history = []
     
     # 2. Deterministic Safety Check
     if check_for_crisis(user_content):
@@ -40,7 +72,7 @@ def handle_user_input(session_id, user_content, audio_path=None):
         
         # 5. Select Strategy based on Flow
         if session.current_flow == "discovery":
-            system_prompt = INTAKE_SYSTEM_PROMPT
+            system_prompt = _get_intake_system_prompt()
         elif session.current_flow == "active_support" and session.problem_category:
             protocol_text = get_protocol_for_category(session.problem_category)
             system_prompt = (
@@ -72,11 +104,24 @@ def handle_user_input(session_id, user_content, audio_path=None):
     confidence = analysis.get("confidence_score", 0)
     
     if detected_cat_name and confidence > 0.8 and session.current_flow == "discovery":
-        category = ProblemCategory.objects.filter(name__iexact=detected_cat_name).first()
+        category = _find_problem_category(detected_cat_name)
         if category:
             session.problem_category = category
             session.current_flow = "active_support"
             session.save()
+            protocol_text = get_protocol_for_category(category)
+            support_prompt = (
+                f"You are supporting a user with {category.name}. {protocol_text}\n"
+                "LANGUAGE RULE: Respond in the SAME language as the user. If they speak Bengali, respond in Bengali characters.\n"
+                "Keep the response short, practical, and guided. Start with one small next step."
+            )
+            analysis = call_llm(
+                system_prompt=support_prompt,
+                user_message=user_content,
+                history=history
+            )
+            detected_cat_name = category.name
+            confidence = max(confidence, analysis.get("confidence_score", 0))
 
     # 9. Return the complete response
     return create_assistant_message(

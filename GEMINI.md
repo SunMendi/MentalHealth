@@ -8,7 +8,7 @@ This is a specialized AI-driven mental health support platform designed to provi
 - **Database:** PostgreSQL
 - **Authentication:** JWT (SimpleJWT)
 - **AI/LLM:** Integrated via an orchestrator for intent classification, risk detection, and response generation.
-- **Voice:** Groq Whisper (STT) and Edge TTS (planned).
+- **Voice:** ElevenLabs Speech-to-Text (STT) and Edge TTS.
 
 ## Project Structure
 - `core/`: Django project root.

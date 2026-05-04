@@ -74,7 +74,7 @@ NOT used for:
 
 VOICE:
 
-- STT: Groq Whisper (MVP)
+- STT: ElevenLabs Speech-to-Text (Scribe)
 - TTS: Edge TTS (replaceable)
 - Flow:
   audio → STT → same chat pipeline → optional TTS
