@@ -25,6 +25,58 @@ from .services.plans import get_daily_task, complete_daily_task, activate_plan
 
 logger = logging.getLogger("chat.views")
 
+
+def _persist_temp_audio(audio_file):
+    temp_name = f"input_{uuid.uuid4()}_{audio_file.name}"
+    temp_dir = os.path.join(settings.BASE_DIR, "media", "temp")
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_path = os.path.join(temp_dir, temp_name)
+
+    with open(temp_path, "wb+") as destination:
+        for chunk in audio_file.chunks():
+            destination.write(chunk)
+
+    return temp_path
+
+
+class AudioTranscriptionAPIView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        audio_file = request.FILES.get("audio")
+        if not audio_file:
+            return Response({"error": "Audio file is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        temp_path = None
+        try:
+            temp_path = _persist_temp_audio(audio_file)
+            transcription = transcribe_audio(temp_path)
+            if not transcription:
+                return Response(
+                    {"error": "Could not transcribe audio. Please retry or type your message."},
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                )
+
+            return Response(
+                {
+                    "transcription": transcription,
+                    "filename": audio_file.name,
+                    "content_type": getattr(audio_file, "content_type", None),
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as exc:
+            logger.exception("Audio transcription failed: %s", exc)
+            return Response({"error": "Failed to transcribe audio."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception as cleanup_err:
+                    logger.error("Failed to delete temp file %s: %s", temp_path, cleanup_err)
+
+
 class SessionListCreateAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -94,15 +146,8 @@ class MessageListCreateApiView(APIView):
         # 1. Handle audio upload and transcription
         if audio_file:
             try:
-                temp_name = f"input_{uuid.uuid4()}_{audio_file.name}"
-                temp_dir = os.path.join(settings.BASE_DIR, "media", "temp")
-                os.makedirs(temp_dir, exist_ok=True)
-                temp_path = os.path.join(temp_dir, temp_name)
-                
-                with open(temp_path, 'wb+') as destination:
-                    for chunk in audio_file.chunks():
-                        destination.write(chunk)
-                
+                temp_path = _persist_temp_audio(audio_file)
+
                 # Transcribe for DB storage and context
                 transcription = transcribe_audio(temp_path)
                 if transcription:
