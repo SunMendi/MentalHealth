@@ -1,9 +1,12 @@
+import logging
 from ..models import ChatSession, ProblemCategory, ChatMessage
 from .llm import call_llm
 from .chat_services import create_user_message, create_assistant_message
 from .safety import check_for_crisis, get_emergency_response
 from .protocols import get_protocol_for_category
 from .plans import activate_plan
+
+logger = logging.getLogger("chat.brain")
 
 INTAKE_SYSTEM_PROMPT_TEMPLATE = """
 You are a compassionate, non-judgmental clinical intake assistant for a mental health app. 
@@ -69,9 +72,16 @@ def handle_user_input(session_id, user_content, audio_path=None):
         # 3. Save User Message
         create_user_message(session_id, user_content)
         
-        # 4. Prepare History for context
-        history_msgs = ChatMessage.objects.filter(session=session).order_by('created_at')[:10]
-        history = [{"role": msg.sender, "content": msg.content} for msg in history_msgs]
+        # 4. Prepare History for context (Get last 10 messages)
+        history_msgs = (
+            ChatMessage.objects.filter(session=session)
+            .order_by("-created_at")[:10]
+        )
+        # Reverse to maintain chronological order for the LLM
+        history = [
+            {"role": msg.sender, "content": msg.content} 
+            for msg in reversed(list(history_msgs))
+        ]
         
         # 5. Select Strategy based on Flow
         if session.current_flow == "discovery":
@@ -115,11 +125,14 @@ def handle_user_input(session_id, user_content, audio_path=None):
             session.save()
             
             # AUTOMATED PLAN ACTIVATION
-            try:
-                activate_plan(session.user, category.id)
-                logger.info("7-day plan automatically activated | user_id=%s | category=%s", session.user.id, category.name)
-            except Exception as e:
-                logger.error("Failed to auto-activate plan: %s", e)
+            if session.user:
+                try:
+                    activate_plan(session.user, category.id)
+                    logger.info("7-day plan automatically activated | user_id=%s | category=%s", session.user.id, category.name)
+                except Exception as e:
+                    logger.error("Failed to auto-activate plan: %s", e)
+            else:
+                logger.info("Plan activation skipped: Session has no associated user")
 
             # Protocol-driven response for immediate relief
             protocol_text = get_protocol_for_category(category)
