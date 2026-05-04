@@ -10,19 +10,17 @@ logger = logging.getLogger("chat.brain")
 
 INTAKE_SYSTEM_PROMPT_TEMPLATE = """
 You are a compassionate, non-judgmental clinical intake assistant for a mental health app. 
-Your goal is to validate the user's feelings and gather enough context to identify their primary concern.
+Your goal is to validate the user's feelings and identify their primary concern so we can start a plan.
 
 Available Categories from our support database:
 {category_list}
 
 Rules:
 1. Be extremely empathetic and validation-focused. Use active listening.
-2. LANGUAGE RULE: Detect the user's language (English or Bengali) and respond in the SAME language. 
-   If the user speaks Bengali (Bangla), you MUST respond in Bengali characters.
-3. DISCOVERY LOOP: If the user is vague or you don't have enough context to pick a category with high confidence, 
-   ask ONE empathetic, open-ended follow-up question to understand the root of the problem.
-4. DO NOT guess a category. Keep detected_category as null until you are very sure.
-5. If the user provides specific details that match a category, select that category.
+2. LANGUAGE RULE: Respond in the SAME language as the user (Bengali for Bengali).
+3. DECISIVENESS: If the user mentions a specific problem (like "overthinking", "career stress", or "panic"), select the matching category immediately. Do not keep asking questions if the user has already provided a clear concern.
+4. MANDATORY GUIDANCE: EVERY response you give MUST end with a clear question that invites the user to reply. Never end with a generic "I'm here to listen" statement.
+5. If you cannot identify a category yet, your question should be a specific probe to find out more.
 6. Always return your analysis in the specified JSON format.
 """
 
@@ -116,7 +114,8 @@ def handle_user_input(session_id, user_content, audio_path=None):
     detected_cat_name = analysis.get("detected_category")
     confidence = analysis.get("confidence_score", 0)
     
-    if detected_cat_name and confidence > 0.8 and session.current_flow == "discovery":
+    # Lower threshold from 0.8 to 0.7 for faster detection when user is clear
+    if detected_cat_name and confidence >= 0.7 and session.current_flow == "discovery":
         category = _find_problem_category(detected_cat_name)
         if category:
             # Acknowledge the problem and trigger the plan
@@ -137,14 +136,16 @@ def handle_user_input(session_id, user_content, audio_path=None):
             # Protocol-driven response for immediate relief
             protocol_text = get_protocol_for_category(category)
             support_prompt = (
-                f"You have identified that the user is dealing with {category.name}. "
-                f"Acknowledge this clearly and empathetically (e.g., 'It sounds like you're going through {category.name}...'). "
-                f"Briefly mention that you've started a gentle 7-day plan to support them over time, "
-                f"but for right now, you want to help them with the immediate moment using this protocol:\n\n"
-                f"{protocol_text}\n\n"
+                f"The user is dealing with {category.name}. You have just transitioned them to active support. "
+                f"1. Acknowledge their situation with deep empathy. "
+                f"2. EXPLICITLY MENTION: 'I've created a gentle 7-day support plan for you based on this. You can check it out in your dashboard whenever you're ready.' "
+                f"3. IMMEDIATELY PIVOT to the current moment: 'But for right now, let's focus on what's happening. I want to try a simple {category.name} exercise with you.' "
+                f"4. PROTOCOL: {protocol_text}. "
                 f"Rules:\n"
-                f"1. Be practical and guided. Start with only the FIRST step of the protocol.\n"
-                f"2. LANGUAGE RULE: Respond in the SAME language as the user (Bengali characters for Bengali).\n"
+                f"- Be short and practical.\n"
+                f"- Start with only the FIRST step of the protocol.\n"
+                f"- MANDATORY GUIDANCE: You MUST end your message with a question or a prompt that asks the user if they are ready or how they feel about the step. Never end with a statement.\n"
+                f"- LANGUAGE RULE: Match the user's language (Bengali for Bengali)."
             )
             
             analysis = call_llm(
