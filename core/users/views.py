@@ -11,7 +11,7 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.http import HttpResponseRedirect
+from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.decorators import method_decorator
@@ -85,6 +85,12 @@ def _build_redirect_url(base_url: str, access_token: str, refresh_token: str) ->
     })
 
     return f"{redirect_base}?{urlencode(existing_params)}{hash_part}"
+
+
+def _mobile_deep_link_response(final_redirect: str) -> HttpResponse:
+    response = HttpResponse(status=302)
+    response["Location"] = final_redirect
+    return response
 
 @method_decorator(xframe_options_exempt, name="dispatch")
 class GoogleAuthURLView(APIView):
@@ -290,7 +296,7 @@ class GoogleCallbackView(APIView):
             )
             logger.info("Redirecting after Google login | platform=%s | target=%s", platform, final_redirect)
             if platform == "mobile":
-                return HttpResponseRedirect(final_redirect)
+                return _mobile_deep_link_response(final_redirect)
             return redirect(final_redirect)
 
         return Response({
