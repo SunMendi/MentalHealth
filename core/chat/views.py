@@ -23,8 +23,11 @@ from .services.chat_services import (
 from .services.brain import handle_user_input
 from .services.voice import generate_speech_base64, transcribe_audio
 from .services.plans import get_daily_task, complete_daily_task, activate_plan
+from .audio_utils import get_audio_duration_seconds
+from .throttles import AudioTranscriptionRateThrottle, ChatMessageRateThrottle
 
 logger = logging.getLogger("chat.views")
+MAX_AUDIO_DURATION_SECONDS = int(os.getenv("MAX_AUDIO_DURATION_SECONDS", "180"))
 
 
 def _persist_temp_audio(audio_file):
@@ -44,6 +47,11 @@ class AudioTranscriptionAPIView(APIView):
     parser_classes = [MultiPartParser, FormParser]
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_throttles(self):
+        if self.request.method == "POST":
+            return [AudioTranscriptionRateThrottle()]
+        return super().get_throttles()
+
     def post(self, request):
         audio_file = request.FILES.get("audio")
         if not audio_file:
@@ -52,6 +60,24 @@ class AudioTranscriptionAPIView(APIView):
         temp_path = None
         try:
             temp_path = _persist_temp_audio(audio_file)
+            duration_seconds = get_audio_duration_seconds(temp_path)
+            if duration_seconds is None:
+                return Response(
+                    {"error": "Could not verify audio duration. Please upload a supported audio file."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if duration_seconds > MAX_AUDIO_DURATION_SECONDS:
+                return Response(
+                    {
+                        "error": (
+                            f"Audio is too long. Maximum allowed length is "
+                            f"{MAX_AUDIO_DURATION_SECONDS // 60} minutes."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             transcription = transcribe_audio(temp_path)
             if not transcription:
                 return Response(
@@ -144,6 +170,11 @@ class MessageListCreateApiView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_throttles(self):
+        if self.request.method == "POST":
+            return [ChatMessageRateThrottle()]
+        return super().get_throttles()
+
     def get(self, request, session_id):
         get_object_or_404(ChatSession, id=session_id, user=request.user)
         messages = get_all_messages_single_session(session_id)
@@ -160,6 +191,23 @@ class MessageListCreateApiView(APIView):
         if audio_file:
             try:
                 temp_path = _persist_temp_audio(audio_file)
+                duration_seconds = get_audio_duration_seconds(temp_path)
+                if duration_seconds is None:
+                    return Response(
+                        {"error": "Could not verify audio duration. Please upload a supported audio file."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if duration_seconds > MAX_AUDIO_DURATION_SECONDS:
+                    return Response(
+                        {
+                            "error": (
+                                f"Audio is too long. Maximum allowed length is "
+                                f"{MAX_AUDIO_DURATION_SECONDS // 60} minutes."
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
                 # Transcribe for DB storage and context
                 transcription = transcribe_audio(temp_path)
