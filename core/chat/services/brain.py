@@ -350,7 +350,7 @@ def handle_user_input(session_id, user_content, audio_path=None):
             support_prompt = (
                 f"The user is dealing with {category.name}. You have just transitioned them to active support. "
                 f"1. Acknowledge their situation with deep empathy. "
-                f"2. EXPLICITLY MENTION: 'I've created a gentle 7-day support plan for you based on this. You can check it out in your dashboard whenever you're ready.' "
+                f"2. EXPLICITLY MENTION: 'I've created a gentle 7-day support plan for you based on this. You can find it in your Daily Plan whenever you're ready.' "
                 f"3. IMMEDIATELY PIVOT to the current moment: 'But for right now, let's focus on what's happening. I want to try a simple {category.name} exercise with you.' "
                 f"4. PROTOCOL: {protocol_text}. "
                 f"5. Current need: {support_plan['current_need']}. "
