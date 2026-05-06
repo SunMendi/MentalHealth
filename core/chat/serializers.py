@@ -22,6 +22,10 @@ class CreateMessageSerializer(serializers.Serializer):
     content = serializers.CharField()
 
 
+class TextToSpeechSerializer(serializers.Serializer):
+    text = serializers.CharField(allow_blank=False, trim_whitespace=True)
+
+
 class CommunityPostSerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
     content = serializers.CharField()

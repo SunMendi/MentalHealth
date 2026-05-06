@@ -1,10 +1,12 @@
 import hashlib
+import json
 import logging
 import os
 import secrets
 from urllib.parse import parse_qsl
 import requests
 from urllib.parse import urlencode
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -24,6 +26,7 @@ from .serializers import UserSerializer
 
 User = get_user_model()
 logger = logging.getLogger("users.views")
+SUPPORTED_AUTH_PLATFORMS = {"web", "mobile"}
 
 
 def _fingerprint(value):
@@ -38,6 +41,50 @@ def _error_response(message, status_code=status.HTTP_400_BAD_REQUEST, extra=None
         payload.update(extra)
     return Response(payload, status=status_code)
 
+
+def _encode_oauth_state(platform: str) -> str:
+    payload = {
+        "nonce": secrets.token_urlsafe(32),
+        "platform": platform if platform in SUPPORTED_AUTH_PLATFORMS else "web",
+    }
+    encoded = urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+    return encoded.rstrip("=")
+
+
+def _decode_oauth_state(state: str | None) -> dict:
+    if not state:
+        return {"platform": "web"}
+
+    try:
+        padded_state = state + "=" * (-len(state) % 4)
+        decoded = urlsafe_b64decode(padded_state.encode("utf-8")).decode("utf-8")
+        payload = json.loads(decoded)
+        platform = payload.get("platform", "web")
+        if platform not in SUPPORTED_AUTH_PLATFORMS:
+            platform = "web"
+        payload["platform"] = platform
+        return payload
+    except Exception:
+        logger.warning("Failed to decode OAuth state, defaulting to web flow")
+        return {"platform": "web"}
+
+
+def _build_redirect_url(base_url: str, access_token: str, refresh_token: str) -> str:
+    redirect_url_parts = base_url.split("#", 1)
+    base_part = redirect_url_parts[0]
+    hash_part = f"#{redirect_url_parts[1]}" if len(redirect_url_parts) > 1 else ""
+
+    query_parts = base_part.split("?", 1)
+    redirect_base = query_parts[0]
+    existing_params = dict(parse_qsl(query_parts[1])) if len(query_parts) > 1 else {}
+
+    existing_params.update({
+        "access": access_token,
+        "refresh": refresh_token,
+    })
+
+    return f"{redirect_base}?{urlencode(existing_params)}{hash_part}"
+
 @method_decorator(xframe_options_exempt, name="dispatch")
 class GoogleAuthURLView(APIView):
     # Allow anyone to access this to get the URL
@@ -46,6 +93,9 @@ class GoogleAuthURLView(APIView):
 
     def get(self, request):
         google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+        platform = (request.GET.get("platform") or "web").strip().lower()
+        if platform not in SUPPORTED_AUTH_PLATFORMS:
+            platform = "web"
         # Ensure we use HTTPS for the redirect_uri in production
         redirect_uri = os.getenv("GOOGLE_REDIRECT_URI") or request.build_absolute_uri(
             reverse("google-callback")
@@ -54,7 +104,7 @@ class GoogleAuthURLView(APIView):
         if not google_client_id:
             return Response({"error": "GOOGLE_CLIENT_ID missing"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        state = secrets.token_urlsafe(32)
+        state = _encode_oauth_state(platform)
         params = {
             "client_id": google_client_id,
             "redirect_uri": redirect_uri,
@@ -77,6 +127,8 @@ class GoogleCallbackView(APIView):
     def get(self, request):
         logger.info("Google callback initiated")
         code = request.GET.get("code")
+        state_payload = _decode_oauth_state(request.GET.get("state"))
+        platform = state_payload.get("platform", "web")
 
         if not code:
             return Response({"error": "No code provided by Google"}, status=status.HTTP_400_BAD_REQUEST)
@@ -84,6 +136,7 @@ class GoogleCallbackView(APIView):
         google_client_id = os.getenv("GOOGLE_CLIENT_ID")
         google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
         frontend_redirect = os.getenv("FRONTEND_GOOGLE_REDIRECT_URL")
+        mobile_redirect = os.getenv("MOBILE_GOOGLE_REDIRECT_URL")
         redirect_uri = os.getenv("GOOGLE_REDIRECT_URI") or request.build_absolute_uri(
             reverse("google-callback")
         ).replace("http://", "https://")
@@ -95,6 +148,8 @@ class GoogleCallbackView(APIView):
                 ("FRONTEND_GOOGLE_REDIRECT_URL", frontend_redirect),
             ) if not value
         ]
+        if platform == "mobile" and not mobile_redirect:
+            missing_env.append("MOBILE_GOOGLE_REDIRECT_URL")
         
         # Check for SECRET_KEY specifically from settings if DJANGO_SECRET_KEY env var is missing
         effective_secret_key = os.getenv("DJANGO_SECRET_KEY") or settings.SECRET_KEY
@@ -225,24 +280,14 @@ class GoogleCallbackView(APIView):
             settings.SIMPLE_JWT.get("REFRESH_TOKEN_LIFETIME"),
         )
 
-        if frontend_redirect:
-            # Handle potential hash in the redirect URL (common in SPA)
-            redirect_url_parts = frontend_redirect.split("#", 1)
-            base_part = redirect_url_parts[0]
-            hash_part = f"#{redirect_url_parts[1]}" if len(redirect_url_parts) > 1 else ""
-            
-            # Extract existing query params from the base part
-            query_parts = base_part.split("?", 1)
-            redirect_base = query_parts[0]
-            existing_params = dict(parse_qsl(query_parts[1])) if len(query_parts) > 1 else {}
-            
-            existing_params.update({
-                "access": str(access_token),
-                "refresh": str(refresh),
-            })
-            
-            final_redirect = f"{redirect_base}?{urlencode(existing_params)}{hash_part}"
-            logger.info("Redirecting to frontend: %s", final_redirect)
+        redirect_target = mobile_redirect if platform == "mobile" else frontend_redirect
+        if redirect_target:
+            final_redirect = _build_redirect_url(
+                redirect_target,
+                access_token=str(access_token),
+                refresh_token=str(refresh),
+            )
+            logger.info("Redirecting after Google login | platform=%s | target=%s", platform, final_redirect)
             return redirect(final_redirect)
 
         return Response({

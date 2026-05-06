@@ -71,6 +71,20 @@ class ChatSafetyLimitsTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Maximum allowed length is 3 minutes.", response.data["error"])
 
+    @patch("core.chat.views.generate_speech_base64", return_value={"base64": "ZmFrZQ==", "voice": "en-US-EmmaMultilingualNeural"})
+    def test_standalone_tts_returns_audio_base64(self, _mock_tts):
+        response = self.client.post("/api/voice/tts/", {"text": "You're safe. Breathe in and out."}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["audio_base64"], "ZmFrZQ==")
+        self.assertEqual(response.data["voice"], "en-US-EmmaMultilingualNeural")
+
+    def test_standalone_tts_rejects_blank_text(self):
+        response = self.client.post("/api/voice/tts/", {"text": ""}, format="json")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("text", response.data)
+
 
 class SupportPlannerTests(TestCase):
     def test_detect_current_need_story_request(self):

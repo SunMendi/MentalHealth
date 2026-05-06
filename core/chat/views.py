@@ -14,6 +14,7 @@ from .serializers import (
     ChatMessageSerializer,
     CreateMessageSerializer,
     CreateSessionSerializer,
+    TextToSpeechSerializer,
     CommunityPostSerializer,
 )
 from .services.chat_services import (
@@ -102,6 +103,34 @@ class AudioTranscriptionAPIView(APIView):
                     os.remove(temp_path)
                 except Exception as cleanup_err:
                     logger.error("Failed to delete temp file %s: %s", temp_path, cleanup_err)
+
+
+class TextToSpeechAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = TextToSpeechSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            tts_res = async_to_sync(generate_speech_base64)(serializer.validated_data["text"])
+            if not tts_res:
+                return Response(
+                    {"error": "Could not generate audio right now. Please try again."},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+            return Response(
+                {
+                    "audio_base64": tts_res["base64"],
+                    "voice": tts_res["voice"],
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as exc:
+            logger.exception("Standalone TTS generation failed: %s", exc)
+            return Response({"error": "Failed to generate speech."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class SessionListCreateAPIView(APIView):
