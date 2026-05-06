@@ -11,6 +11,7 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.http import HttpResponseRedirect
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.decorators import method_decorator
@@ -288,6 +289,8 @@ class GoogleCallbackView(APIView):
                 refresh_token=str(refresh),
             )
             logger.info("Redirecting after Google login | platform=%s | target=%s", platform, final_redirect)
+            if platform == "mobile":
+                return HttpResponseRedirect(final_redirect)
             return redirect(final_redirect)
 
         return Response({
