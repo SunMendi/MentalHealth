@@ -180,3 +180,9 @@ User feels:
 
 NOT:
 "I chatted with random AI"
+
+---
+
+DEPLOYMENT NOTE:
+
+- Keep Railway backend deploys stable and verify Google OAuth after each production release.
