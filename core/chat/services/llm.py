@@ -25,6 +25,13 @@ Return valid JSON with exactly these keys:
 - suggested_buttons: array of short strings
 - is_crisis: boolean
 Do not wrap the JSON in markdown.
+Rules for the JSON fields:
+- empathetic_response must sound warm, human, and specific to the user's exact situation.
+- empathetic_response must be short to medium length, usually 2 to 5 sentences, unless the user explicitly asks for more.
+- empathetic_response must end with a clear question every time.
+- If the user asks for a short story, metaphor, example, or script, provide it naturally inside empathetic_response.
+- suggested_buttons must be tailored to the user's current state, not generic repeated options.
+- suggested_buttons must contain 2 to 4 concise options.
 """
 
 
@@ -86,7 +93,7 @@ def call_llm(system_prompt: str, user_message: str, history: List[Dict[str, str]
         response = client.chat.completions.create(
             model=GROQ_CHAT_MODEL,
             messages=messages,
-            temperature=0.4,
+            temperature=0.7,
             response_format={"type": "json_object"},
         )
 
