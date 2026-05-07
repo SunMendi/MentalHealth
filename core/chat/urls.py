@@ -1,5 +1,7 @@
 from django.urls import path 
 from .views import (
+    AppVersionCheckAPIView,
+    AppVersionConfigAPIView,
     AudioTranscriptionAPIView,
     TextToSpeechAPIView,
     SessionListCreateAPIView, 
@@ -12,6 +14,10 @@ from .views import (
 
 
 urlpatterns = [
+    path('app/version-check/', AppVersionCheckAPIView.as_view(), name='app-version-check'),
+    path('app/version-check', AppVersionCheckAPIView.as_view()),
+    path('app/version-config/', AppVersionConfigAPIView.as_view(), name='app-version-config'),
+    path('app/version-config', AppVersionConfigAPIView.as_view()),
     path('voice/transcribe/', AudioTranscriptionAPIView.as_view(), name='voice-transcribe'),
     path('voice/transcribe', AudioTranscriptionAPIView.as_view()),
     path('voice/tts/', TextToSpeechAPIView.as_view(), name='voice-tts'),

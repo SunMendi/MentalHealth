@@ -10,7 +10,10 @@ from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from .models import ChatSession, CommunityPost
+from .models import AppVersionConfig
 from .serializers import (
+    AppVersionCheckSerializer,
+    AppVersionConfigSerializer,
     ChatMessageSerializer,
     CreateMessageSerializer,
     CreateSessionSerializer,
@@ -42,6 +45,12 @@ def _persist_temp_audio(audio_file):
             destination.write(chunk)
 
     return temp_path
+
+
+def _parse_version_parts(version: str):
+    parts = [int(part) for part in str(version).split(".")]
+    parts.extend([0] * (3 - len(parts)))
+    return tuple(parts[:3])
 
 
 class AudioTranscriptionAPIView(APIView):
@@ -131,6 +140,114 @@ class TextToSpeechAPIView(APIView):
         except Exception as exc:
             logger.exception("Standalone TTS generation failed: %s", exc)
             return Response({"error": "Failed to generate speech."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class AppVersionCheckAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        serializer = AppVersionCheckSerializer(data=request.query_params)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        platform = serializer.validated_data["platform"]
+        version = serializer.validated_data["version"]
+        config = AppVersionConfig.objects.filter(platform=platform).first()
+        if not config:
+            return Response(
+                {"error": f"No app version configuration found for platform '{platform}'."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        current_parts = _parse_version_parts(version)
+        latest_parts = _parse_version_parts(config.latest_version)
+        minimum_parts = _parse_version_parts(config.minimum_supported_version)
+        update_required = current_parts < minimum_parts or config.force_update
+        update_available = current_parts < latest_parts
+
+        return Response(
+            {
+                "platform": config.platform,
+                "current_version": version,
+                "latest_version": config.latest_version,
+                "minimum_supported_version": config.minimum_supported_version,
+                "update_required": update_required,
+                "update_available": update_available,
+                "force_update": config.force_update,
+                "update_message": config.update_message,
+                "store_url": config.store_url,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class AppVersionConfigAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_staff:
+            return Response({"error": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        platform = (request.query_params.get("platform") or "").strip().lower()
+        if platform:
+            config = get_object_or_404(AppVersionConfig, platform=platform)
+            return Response(
+                {
+                    "platform": config.platform,
+                    "latest_version": config.latest_version,
+                    "minimum_supported_version": config.minimum_supported_version,
+                    "force_update": config.force_update,
+                    "update_message": config.update_message,
+                    "store_url": config.store_url,
+                }
+            )
+
+        configs = AppVersionConfig.objects.all()
+        return Response(
+            [
+                {
+                    "platform": config.platform,
+                    "latest_version": config.latest_version,
+                    "minimum_supported_version": config.minimum_supported_version,
+                    "force_update": config.force_update,
+                    "update_message": config.update_message,
+                    "store_url": config.store_url,
+                }
+                for config in configs
+            ]
+        )
+
+    def post(self, request):
+        if not request.user.is_staff:
+            return Response({"error": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = AppVersionConfigSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        config, _created = AppVersionConfig.objects.update_or_create(
+            platform=serializer.validated_data["platform"],
+            defaults={
+                "latest_version": serializer.validated_data["latest_version"],
+                "minimum_supported_version": serializer.validated_data["minimum_supported_version"],
+                "force_update": serializer.validated_data["force_update"],
+                "update_message": serializer.validated_data["update_message"],
+                "store_url": serializer.validated_data["store_url"],
+            },
+        )
+
+        return Response(
+            {
+                "platform": config.platform,
+                "latest_version": config.latest_version,
+                "minimum_supported_version": config.minimum_supported_version,
+                "force_update": config.force_update,
+                "update_message": config.update_message,
+                "store_url": config.store_url,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class SessionListCreateAPIView(APIView):

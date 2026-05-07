@@ -8,7 +8,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import ChatMessage, ChatSession
+from .models import AppVersionConfig, ChatMessage, ChatSession
 from .services.support_planner import build_support_plan, detect_current_need
 
 User = get_user_model()
@@ -115,3 +115,78 @@ class SupportPlannerTests(TestCase):
         )
         self.assertEqual(plan["current_need"], "REFRAMING")
         self.assertEqual(plan["response_style"], "gentle_cbt")
+
+
+class AppVersionApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.staff_user = User.objects.create_user(username="admin", password="secret123", is_staff=True)
+        self.normal_user = User.objects.create_user(username="member", password="secret123")
+
+    def test_version_check_returns_update_flags(self):
+        AppVersionConfig.objects.create(
+            platform="android",
+            latest_version="1.2.0",
+            minimum_supported_version="1.1.0",
+            update_message="Please update for the best experience.",
+            store_url="https://play.google.com/store/apps/details?id=com.sereniomind",
+        )
+
+        response = self.client.get("/api/app/version-check/?platform=android&version=1.0.0")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["update_required"])
+        self.assertTrue(response.data["update_available"])
+        self.assertEqual(response.data["latest_version"], "1.2.0")
+
+    def test_version_check_respects_force_update(self):
+        AppVersionConfig.objects.create(
+            platform="ios",
+            latest_version="2.0.0",
+            minimum_supported_version="1.0.0",
+            force_update=True,
+        )
+
+        response = self.client.get("/api/app/version-check/?platform=ios&version=2.0.0")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["update_required"])
+        self.assertFalse(response.data["update_available"])
+
+    def test_version_config_requires_staff_user(self):
+        self.client.force_authenticate(user=self.normal_user)
+
+        response = self.client.post(
+            "/api/app/version-config/",
+            {
+                "platform": "android",
+                "latest_version": "1.0.0",
+                "minimum_supported_version": "1.0.0",
+                "force_update": False,
+                "update_message": "",
+                "store_url": "",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_version_config_upserts_platform_config(self):
+        self.client.force_authenticate(user=self.staff_user)
+
+        response = self.client.post(
+            "/api/app/version-config/",
+            {
+                "platform": "android",
+                "latest_version": "1.3.0",
+                "minimum_supported_version": "1.1.0",
+                "force_update": False,
+                "update_message": "Update available.",
+                "store_url": "https://play.google.com/store/apps/details?id=com.sereniomind",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["latest_version"], "1.3.0")
+        self.assertEqual(AppVersionConfig.objects.get(platform="android").minimum_supported_version, "1.1.0")

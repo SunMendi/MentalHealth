@@ -126,3 +126,24 @@ class CommunityPost(models.Model):
 
     def __str__(self):
         return f"Post {self.id}: {self.content[:30]}..."
+
+
+class AppVersionConfig(models.Model):
+    PLATFORM_CHOICES = [
+        ("android", "Android"),
+        ("ios", "iOS"),
+    ]
+
+    platform = models.CharField(max_length=20, choices=PLATFORM_CHOICES, unique=True)
+    latest_version = models.CharField(max_length=20)
+    minimum_supported_version = models.CharField(max_length=20)
+    force_update = models.BooleanField(default=False)
+    update_message = models.CharField(max_length=255, blank=True)
+    store_url = models.URLField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["platform"]
+
+    def __str__(self):
+        return f"{self.platform}: latest={self.latest_version} min={self.minimum_supported_version}"
