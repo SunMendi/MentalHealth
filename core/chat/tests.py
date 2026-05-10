@@ -25,6 +25,10 @@ def _build_wav_file(duration_seconds):
     return SimpleUploadedFile("sample.wav", buffer.getvalue(), content_type="audio/wav")
 
 
+def _build_audio_file(name, payload, content_type="audio/webm"):
+    return SimpleUploadedFile(name, payload, content_type=content_type)
+
+
 class ChatSafetyLimitsTests(TestCase):
     def setUp(self):
         cache.clear()
@@ -70,6 +74,39 @@ class ChatSafetyLimitsTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("Maximum allowed length is 3 minutes.", response.data["error"])
+
+    @patch("core.chat.views.get_audio_duration_seconds", return_value=None)
+    @patch("core.chat.views.transcribe_audio", return_value="hello")
+    def test_audio_transcription_allows_unsupported_duration_when_transcription_succeeds(
+        self,
+        _mock_transcribe,
+        _mock_duration,
+    ):
+        response = self.client.post(
+            "/api/voice/transcribe/",
+            {"audio": _build_audio_file("recording.webm", b"small-webm-payload")},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["transcription"], "hello")
+
+    @patch("core.chat.views.MAX_AUDIO_FILE_SIZE_BYTES", 10)
+    @patch("core.chat.views.get_audio_duration_seconds", return_value=None)
+    @patch("core.chat.views.transcribe_audio", return_value="hello")
+    def test_audio_transcription_rejects_large_file_when_duration_is_unknown(
+        self,
+        _mock_transcribe,
+        _mock_duration,
+    ):
+        response = self.client.post(
+            "/api/voice/transcribe/",
+            {"audio": _build_audio_file("recording.webm", b"01234567890")},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("under 3 minutes", response.data["error"])
 
     @patch("core.chat.views.generate_speech_base64", return_value={"base64": "ZmFrZQ==", "voice": "en-US-EmmaMultilingualNeural"})
     def test_standalone_tts_returns_audio_base64(self, _mock_tts):

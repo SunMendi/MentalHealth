@@ -32,6 +32,7 @@ from .throttles import AudioTranscriptionRateThrottle, ChatMessageRateThrottle
 
 logger = logging.getLogger("chat.views")
 MAX_AUDIO_DURATION_SECONDS = int(os.getenv("MAX_AUDIO_DURATION_SECONDS", "180"))
+MAX_AUDIO_FILE_SIZE_BYTES = int(os.getenv("MAX_AUDIO_FILE_SIZE_BYTES", str(10 * 1024 * 1024)))
 
 
 def _persist_temp_audio(audio_file):
@@ -53,6 +54,49 @@ def _parse_version_parts(version: str):
     return tuple(parts[:3])
 
 
+def _validate_audio_length(temp_path, audio_file):
+    duration_seconds = get_audio_duration_seconds(temp_path)
+    if duration_seconds is not None:
+        if duration_seconds > MAX_AUDIO_DURATION_SECONDS:
+            return Response(
+                {
+                    "error": (
+                        f"Audio is too long. Maximum allowed length is "
+                        f"{MAX_AUDIO_DURATION_SECONDS // 60} minutes."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return None
+
+    file_size_bytes = os.path.getsize(temp_path)
+    if file_size_bytes > MAX_AUDIO_FILE_SIZE_BYTES:
+        logger.warning(
+            "Rejecting audio with unknown duration because file is too large | file=%s | content_type=%s | size_bytes=%s | max_size_bytes=%s",
+            audio_file.name,
+            getattr(audio_file, "content_type", None),
+            file_size_bytes,
+            MAX_AUDIO_FILE_SIZE_BYTES,
+        )
+        return Response(
+            {
+                "error": (
+                    "Could not verify audio duration and the uploaded file is too large. "
+                    "Please keep voice notes under 3 minutes."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    logger.warning(
+        "Skipping audio duration enforcement because duration could not be determined | file=%s | content_type=%s | size_bytes=%s",
+        audio_file.name,
+        getattr(audio_file, "content_type", None),
+        file_size_bytes,
+    )
+    return None
+
+
 class AudioTranscriptionAPIView(APIView):
     parser_classes = [MultiPartParser, FormParser]
     permission_classes = [permissions.IsAuthenticated]
@@ -70,23 +114,9 @@ class AudioTranscriptionAPIView(APIView):
         temp_path = None
         try:
             temp_path = _persist_temp_audio(audio_file)
-            duration_seconds = get_audio_duration_seconds(temp_path)
-            if duration_seconds is None:
-                return Response(
-                    {"error": "Could not verify audio duration. Please upload a supported audio file."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            if duration_seconds > MAX_AUDIO_DURATION_SECONDS:
-                return Response(
-                    {
-                        "error": (
-                            f"Audio is too long. Maximum allowed length is "
-                            f"{MAX_AUDIO_DURATION_SECONDS // 60} minutes."
-                        )
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+            length_error_response = _validate_audio_length(temp_path, audio_file)
+            if length_error_response:
+                return length_error_response
 
             transcription = transcribe_audio(temp_path)
             if not transcription:
@@ -337,23 +367,9 @@ class MessageListCreateApiView(APIView):
         if audio_file:
             try:
                 temp_path = _persist_temp_audio(audio_file)
-                duration_seconds = get_audio_duration_seconds(temp_path)
-                if duration_seconds is None:
-                    return Response(
-                        {"error": "Could not verify audio duration. Please upload a supported audio file."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-
-                if duration_seconds > MAX_AUDIO_DURATION_SECONDS:
-                    return Response(
-                        {
-                            "error": (
-                                f"Audio is too long. Maximum allowed length is "
-                                f"{MAX_AUDIO_DURATION_SECONDS // 60} minutes."
-                            )
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                length_error_response = _validate_audio_length(temp_path, audio_file)
+                if length_error_response:
+                    return length_error_response
 
                 # Transcribe for DB storage and context
                 transcription = transcribe_audio(temp_path)
