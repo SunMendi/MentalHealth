@@ -233,7 +233,7 @@ class GoogleCallbackView(APIView):
         email = (user_data.get("email") or "").strip().lower()
         if not email:
             logger.error("Google userinfo missing email: %s", user_data)
-            return _error_response("Google account did not provide an email address.")
+            return _error_response("Google account did provide an email address.")
 
         # Find or create user
         try:
@@ -304,6 +304,56 @@ class GoogleCallbackView(APIView):
             "refresh": str(refresh),
             "user": {"email": user.email}
         })
+
+
+class ReviewerLoginView(APIView):
+    """
+    Surgical bypass for App Store/Play Store review.
+    Allows authentication with a specific email and secret bypass key,
+    skipping Google OAuth entirely.
+    """
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        email = request.data.get("email", "").strip().lower()
+        secret = request.data.get("secret", "")
+        
+        # These should be set in environment variables (e.g., .env)
+        reviewer_email = os.getenv("REVIEWER_BYPASS_EMAIL")
+        reviewer_secret = os.getenv("REVIEWER_BYPASS_SECRET")
+
+        if not reviewer_email or not reviewer_secret:
+            return Response(
+                {"error": "Bypass authentication is not configured on server."}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if email == reviewer_email.strip().lower() and secret == reviewer_secret:
+            logger.info("Reviewer bypass login successful for email=%s", email)
+            
+            user = User.objects.filter(email=email).first()
+            if not user:
+                # Create the reviewer user if they don't exist
+                user = User.objects.create(
+                    email=email,
+                    username=f"reviewer-{secrets.token_hex(4)}",
+                    first_name="App",
+                    last_name="Reviewer"
+                )
+            
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "user": {
+                    "email": user.email,
+                    "id": user.id
+                }
+            })
+        
+        logger.warning("Failed reviewer bypass attempt | email=%s", email)
+        return Response({"error": "Invalid reviewer credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
 
 class UserProfileView(APIView):
