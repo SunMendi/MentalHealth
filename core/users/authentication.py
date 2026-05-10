@@ -10,9 +10,12 @@ logger = logging.getLogger("users.auth")
 
 
 def _fingerprint(value):
+    
     if not value:
         return "missing"
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
+
+
 
 
 class LoggingJWTAuthentication(JWTAuthentication):
