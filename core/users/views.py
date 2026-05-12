@@ -369,3 +369,18 @@ class UserProfileView(APIView):
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request):
+        user = request.user
+        user_id = user.id
+
+        logger.info("Account deletion initiated | user_id=%s", user_id)
+
+        with transaction.atomic():
+            user.delete()
+
+        logger.info("Account deletion completed | user_id=%s", user_id)
+        return Response(
+            {"detail": "Account deleted successfully."},
+            status=status.HTTP_200_OK,
+        )

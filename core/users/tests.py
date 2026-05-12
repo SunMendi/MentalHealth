@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
+from chat.models import ChatMessage, ChatSession, PlanProgress, ProblemCategory, UserPlan
 from .views import _decode_oauth_state
 
 User = get_user_model()
@@ -84,3 +85,39 @@ class GoogleOAuthFlowTests(TestCase):
 
         self.assertEqual(response.status_code, 500)
         self.assertIn("MOBILE_GOOGLE_REDIRECT_URL", response.data["error"])
+
+
+class UserAccountDeletionTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="delete-me",
+            email="delete@example.com",
+            password="secret123",
+            emergency_number="+8801000000000",
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_delete_profile_removes_user_and_related_records(self):
+        category = ProblemCategory.objects.create(name="General Anxiety")
+        session = ChatSession.objects.create(user=self.user, title="Private Session")
+        ChatMessage.objects.create(session=session, sender="user", content="I feel overwhelmed")
+        plan = UserPlan.objects.create(user=self.user, category=category)
+        PlanProgress.objects.create(plan=plan, day_number=1, is_completed=True)
+
+        response = self.client.delete("/api/profile/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["detail"], "Account deleted successfully.")
+        self.assertFalse(User.objects.filter(id=self.user.id).exists())
+        self.assertFalse(ChatSession.objects.filter(id=session.id).exists())
+        self.assertFalse(ChatMessage.objects.filter(session=session).exists())
+        self.assertFalse(UserPlan.objects.filter(id=plan.id).exists())
+        self.assertFalse(PlanProgress.objects.filter(plan=plan).exists())
+
+    def test_delete_profile_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.delete("/api/profile/")
+
+        self.assertEqual(response.status_code, 401)
