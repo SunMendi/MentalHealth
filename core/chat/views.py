@@ -14,8 +14,8 @@ from .models import AppVersionConfig
 from .serializers import (
     AppVersionCheckSerializer,
     AppVersionConfigSerializer,
-    ChatMessageSerializer,
-    CreateMessageSerializer,
+    ChatMessageResponseSerializer,
+    ChatMessageRequestSerializer,
     CreateSessionSerializer,
     TextToSpeechSerializer,
     CommunityPostSerializer,
@@ -354,7 +354,7 @@ class MessageListCreateApiView(APIView):
     def get(self, request, session_id):
         get_object_or_404(ChatSession, id=session_id, user=request.user)
         messages = get_all_messages_single_session(session_id)
-        serializer = ChatMessageSerializer(messages, many=True)
+        serializer = ChatMessageResponseSerializer(messages, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request, session_id):
@@ -409,8 +409,8 @@ class MessageListCreateApiView(APIView):
 
             return Response(
                 {
-                    "user_message": ChatMessageSerializer(user_message).data,
-                    "assistant_message": ChatMessageSerializer(assistant_message).data,
+                    "user_message": ChatMessageResponseSerializer(user_message).data,
+                    "assistant_message": ChatMessageResponseSerializer(assistant_message).data,
                     "audio_base64": audio_base64,
                     "transcription": user_content if audio_file else None
                 },

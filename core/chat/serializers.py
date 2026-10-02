@@ -6,7 +6,7 @@ class CreateSessionSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=100, required=False, allow_blank=True, allow_null=True)
     problem_category = serializers.IntegerField(required=False, allow_null=True)
 
-class ChatMessageSerializer(serializers.Serializer):
+class ChatMessageResponseSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     sender = serializers.CharField()
     content = serializers.CharField()
@@ -19,8 +19,16 @@ class ChatMessageSerializer(serializers.Serializer):
         return (obj.metadata or {}).get("audio_url")
 
 
-class CreateMessageSerializer(serializers.Serializer):
+# Backward compatibility alias
+ChatMessageSerializer = ChatMessageResponseSerializer
+
+
+class ChatMessageRequestSerializer(serializers.Serializer):
     content = serializers.CharField()
+
+
+# Backward compatibility alias
+CreateMessageSerializer = ChatMessageRequestSerializer
 
 
 class TextToSpeechSerializer(serializers.Serializer):

@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from groq import Groq
 
@@ -9,7 +9,14 @@ from groq import Groq
 logger = logging.getLogger("chat.llm")
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_CHAT_MODEL = os.getenv("GROQ_CHAT_MODEL", "llama-3.3-70b-versatile")
+GROQ_CHAT_MODEL = (
+    os.getenv("GROQ_CHAT_MODEL")
+    or os.getenv("GROQ_MODEL")
+    or "openai/gpt-oss-120b"
+)
+# Fallback to high-capability Groq model if llama-3.3 is not enabled on account
+if GROQ_CHAT_MODEL == "llama-3.3-70b-versatile":
+    GROQ_CHAT_MODEL = "openai/gpt-oss-120b"
 
 if not GROQ_API_KEY:
     logger.error("CRITICAL: GROQ_API_KEY is missing for chat generation!")
@@ -128,3 +135,57 @@ def call_llm(system_prompt: str, user_message: str, history: List[Dict[str, str]
             "suggested_buttons": ["Try again"],
             "is_crisis": False,
         }
+
+
+def call_agent_llm(
+    messages: List[Dict[str, Any]],
+    tools: Optional[List[Dict[str, Any]]] = None,
+    temperature: float = 0.7,
+    model: Optional[str] = None,
+) -> Any:
+    """
+    Calls Groq chat completion with native function/tool calling enabled.
+    Returns the message object from response.choices[0].message:
+      - .content: text response from the model (or None if only tools were called)
+      - .tool_calls: list of tool calls requested by the model (or None)
+    """
+    if not client:
+        raise RuntimeError("Groq client is not initialized. Please verify GROQ_API_KEY.")
+
+    target_model = model or GROQ_CHAT_MODEL
+
+    kwargs: Dict[str, Any] = {
+        "model": target_model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+
+    if tools:
+        kwargs["tools"] = tools
+        kwargs["tool_choice"] = "auto"
+
+    logger.debug(
+        "Calling Groq agent completion | model=%s | message_count=%d | tools_count=%d",
+        target_model,
+        len(messages),
+        len(tools) if tools else 0,
+    )
+
+    response = client.chat.completions.create(**kwargs)
+    choice = response.choices[0].message
+
+    if choice.tool_calls:
+        logger.info(
+            "Groq agent requested tool execution | model=%s | tool_calls=%s",
+            target_model,
+            [tc.function.name for tc in choice.tool_calls],
+        )
+    else:
+        logger.info(
+            "Groq agent generated direct response | model=%s | preview=%s",
+            target_model,
+            (choice.content or "")[:100],
+        )
+
+    return choice
+
