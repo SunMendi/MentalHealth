@@ -25,8 +25,8 @@ RUN addgroup --system django \
 
 USER django
 
-EXPOSE 8000
+EXPOSE 8080
 
-# Hardcoded to port 8000
-CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn core.asgi:application --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers ${WEB_CONCURRENCY:-2} --timeout ${GUNICORN_TIMEOUT:-120} --access-logfile - --error-logfile -"]
+# Hardcoded to port 8080 to match Railway Networking
+CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn core.asgi:application --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8080 --workers ${WEB_CONCURRENCY:-2} --timeout ${GUNICORN_TIMEOUT:-120} --access-logfile - --error-logfile -"]
 
