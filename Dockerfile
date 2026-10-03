@@ -27,6 +27,6 @@ USER django
 
 EXPOSE 8000
 
-# Railway supplies PORT. The fallback makes the image work locally.
-CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn core.asgi:application --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --timeout ${GUNICORN_TIMEOUT:-120} --access-logfile - --error-logfile -"]
+# Hardcoded to port 8000
+CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn core.asgi:application --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers ${WEB_CONCURRENCY:-2} --timeout ${GUNICORN_TIMEOUT:-120} --access-logfile - --error-logfile -"]
 
