@@ -16,12 +16,20 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.conf import settings
+from django.http import JsonResponse
 from django.urls import include, path
 from django.views.static import serve
 
+
+def health_check(request):
+    return JsonResponse({"status": "healthy", "service": "mentalhealth"})
+
+
 urlpatterns = [
+    path('', health_check, name='health-root'),
+    path('health/', health_check, name='health-check'),
     path('admin/', admin.site.urls),
     path('api/', include('users.urls')),
-    path('api/',include('chat.urls')),
+    path('api/', include('chat.urls')),
     path('media/<path:path>', serve, {'document_root': settings.MEDIA_ROOT}),
 ]
