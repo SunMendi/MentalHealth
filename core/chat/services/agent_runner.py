@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from .llm import call_agent_llm
 from .tools import AGENT_TOOLS, execute_tool
 
-logger = logging.getLogger("chat.agent_runner")
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 

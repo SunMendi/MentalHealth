@@ -19,6 +19,7 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework_simplejwt.settings import api_settings as jwt_api_settings
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -384,3 +385,42 @@ class UserProfileView(APIView):
             {"detail": "Account deleted successfully."},
             status=status.HTTP_200_OK,
         )
+
+
+class GuestLoginView(APIView):
+    """
+    Allows anonymous exploration without requiring immediate Google OAuth.
+    Creates a temporary guest user and returns real JWT access and refresh tokens.
+    """
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    throttle_classes = [AnonRateThrottle]
+
+    def post(self, request):
+        guest_id = secrets.token_hex(6)
+        username = f"guest-{guest_id}"
+        email = f"guest_{guest_id}@sereniomind.internal"
+
+        user = User.objects.create(
+            email=email,
+            username=username,
+            first_name="Friend",
+            last_name="",
+        )
+
+        refresh = RefreshToken.for_user(user)
+        access_token = refresh.access_token
+
+        logger.info("Anonymous guest session created: user_id=%s username=%s", user.id, username)
+
+        return Response({
+            "access": str(access_token),
+            "refresh": str(refresh),
+            "user": {
+                "id": str(user.id),
+                "email": user.email,
+                "first_name": user.first_name,
+                "is_guest": True,
+            }
+        }, status=status.HTTP_201_CREATED)
+

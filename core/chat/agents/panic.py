@@ -2,7 +2,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from ..services.agent_runner import run_agent_loop, AgentExecutionResult
 
-logger = logging.getLogger("chat.agents.panic")
+logger = logging.getLogger(__name__)
 
 PANIC_SYSTEM_PROMPT = """You are a calm, grounding Somatic Presence (trained in DBT TIPP & Grounding).
 Your sole purpose is to help a person whose nervous system is in acute alarm feel physically anchored and safe right now.
@@ -39,4 +39,4 @@ def handle_panic_flow(
         session_history=session_history,
         user=user,
         temperature=0.3,
-    )
+)

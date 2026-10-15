@@ -100,6 +100,14 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'users.authentication.LoggingJWTAuthentication',
     ),
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': os.getenv('GLOBAL_ANON_THROTTLE_RATE', '60/minute'),
+        'user': os.getenv('GLOBAL_USER_THROTTLE_RATE', '180/minute'),
+    },
 }
 
 SIMPLE_JWT = {
