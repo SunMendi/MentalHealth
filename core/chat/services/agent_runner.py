@@ -4,7 +4,7 @@ import re
 from typing import Any, Dict, List, Optional
 from django.contrib.auth import get_user_model
 
-from .llm import call_agent_llm
+from .llm import call_agent_llm, client, GROQ_CHAT_MODEL
 from .tools import AGENT_TOOLS, execute_tool
 
 logger = logging.getLogger(__name__)
@@ -224,3 +224,183 @@ def run_agent_loop(
             "tools_called": [t["tool"] for t in executed_tools],
         },
     )
+
+
+class StreamingButtonFilter:
+    """
+    Filters out <buttons>...</buttons> tags from the streaming token stream
+    and extracts structured options for UI chips.
+    """
+    def __init__(self):
+        self.buffer = ""
+        self.in_buttons = False
+        self.buttons_text = ""
+
+    def process(self, chunk: str) -> str:
+        out = []
+        for ch in chunk:
+            if not self.in_buttons:
+                self.buffer += ch
+                lower = self.buffer.lower()
+                if "<buttons>" in lower:
+                    idx = lower.index("<buttons>")
+                    out.append(self.buffer[:idx])
+                    self.in_buttons = True
+                    self.buttons_text += self.buffer[idx + len("<buttons>"):]
+                    self.buffer = ""
+                elif not "<buttons>".startswith(lower):
+                    out.append(self.buffer)
+                    self.buffer = ""
+            else:
+                self.buttons_text += ch
+        return "".join(out)
+
+    def finalize(self) -> tuple[str, List[str]]:
+        out = self.buffer if not self.in_buttons else ""
+        buttons_raw = (
+            self.buttons_text.replace("</buttons>", "")
+            .replace("</BUTTONS>", "")
+            .strip()
+        )
+        buttons = [
+            line.strip().strip("-*•>").strip("\"' ")
+            for line in buttons_raw.split("\n")
+            if line.strip().strip("-*•>").strip("\"' ")
+        ]
+        return out, [b for b in buttons if len(b) <= 45][:4]
+
+
+def run_agent_loop_stream(
+    user_message: str,
+    system_prompt: str,
+    session_history: Optional[List[Dict[str, str]]] = None,
+    user: Optional[Any] = None,
+    tools: Optional[List[Dict[str, Any]]] = None,
+    max_iterations: int = 4,
+    temperature: float = 0.6,
+):
+    """
+    Autonomous Agent Decision Loop with real-time SSE token streaming.
+    Yields:
+      - {"type": "token", "content": clean_chunk}
+      - {"type": "agent_finished", "buttons": [...], "executed_tools": [...], "iterations": int}
+    """
+    if not client:
+        raise RuntimeError("Groq client is not initialized.")
+
+    active_tools = tools if tools is not None else AGENT_TOOLS
+    executed_tools: List[Dict[str, Any]] = []
+
+    messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": system_prompt}
+    ]
+
+    for item in session_history or []:
+        role = item.get("role")
+        if role in ("user", "assistant"):
+            messages.append({"role": role, "content": item.get("content", "")})
+
+    messages.append({"role": "user", "content": user_message})
+
+    button_filter = StreamingButtonFilter()
+    iteration = 0
+
+    while iteration < max_iterations:
+        iteration += 1
+        logger.info("Agent streaming loop iteration %d/%d | messages=%d", iteration, max_iterations, len(messages))
+
+        tool_calls_dict: Dict[int, Dict[str, str]] = {}
+        has_content = False
+
+        stream = client.chat.completions.create(
+            model=GROQ_CHAT_MODEL,
+            messages=messages,
+            tools=active_tools,
+            temperature=temperature,
+            stream=True,
+        )
+
+        for chunk in stream:
+            choice = chunk.choices[0]
+            delta = choice.delta
+
+            # Accumulate streaming tool calls if model wants to call functions
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    if idx not in tool_calls_dict:
+                        tool_calls_dict[idx] = {
+                            "id": tc.id or "",
+                            "name": tc.function.name if tc.function and tc.function.name else "",
+                            "arguments": tc.function.arguments or "",
+                        }
+                    else:
+                        if tc.id:
+                            tool_calls_dict[idx]["id"] += tc.id
+                        if tc.function and tc.function.name:
+                            tool_calls_dict[idx]["name"] += tc.function.name
+                        if tc.function and tc.function.arguments:
+                            tool_calls_dict[idx]["arguments"] += tc.function.arguments
+
+            # Stream text tokens directly to user
+            if delta.content:
+                has_content = True
+                clean_chunk = button_filter.process(delta.content)
+                if clean_chunk:
+                    yield {"type": "token", "content": clean_chunk}
+
+        # If tools were invoked in this turn
+        if tool_calls_dict:
+            assistant_tool_msg = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": tc_info["id"] or f"call_{idx}",
+                        "type": "function",
+                        "function": {
+                            "name": tc_info["name"],
+                            "arguments": tc_info["arguments"],
+                        },
+                    }
+                    for idx, tc_info in tool_calls_dict.items()
+                ],
+            }
+            messages.append(assistant_tool_msg)
+
+            for idx, tc_info in tool_calls_dict.items():
+                tool_name = tc_info["name"]
+                try:
+                    args = json.loads(tc_info["arguments"]) if tc_info["arguments"] else {}
+                except Exception:
+                    args = {}
+
+                tool_output = execute_tool(tool_name, args, user=user)
+                executed_tools.append({
+                    "tool": tool_name,
+                    "arguments": args,
+                    "result": tool_output,
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc_info["id"] or f"call_{idx}",
+                    "name": tool_name,
+                    "content": json.dumps(tool_output),
+                })
+            # Loop again to generate final response incorporating tool observation
+            continue
+
+        if has_content:
+            break
+
+    final_out, buttons = button_filter.finalize()
+    if final_out:
+        yield {"type": "token", "content": final_out}
+
+    yield {
+        "type": "agent_finished",
+        "buttons": buttons,
+        "executed_tools": executed_tools,
+        "iterations": iteration,
+    }
+

@@ -1,8 +1,10 @@
 import os
 import uuid
 import logging
+import json
 from asgiref.sync import async_to_sync
 from django.conf import settings
+from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status, permissions
 from rest_framework.response import Response
@@ -24,7 +26,7 @@ from .services.chat_services import (
     create_session,
     get_all_messages_single_session,
 )
-from .services.brain import handle_user_input
+from .services.brain import handle_user_input, handle_user_input_stream
 from .services.voice import generate_speech_base64, transcribe_audio
 from .services.plans import get_daily_task, complete_daily_task, activate_plan
 from .audio_utils import get_audio_duration_seconds
@@ -427,6 +429,34 @@ class MessageListCreateApiView(APIView):
                     os.remove(temp_path)
                 except Exception as cleanup_err:
                     logger.error("Failed to delete temp file %s: %s", temp_path, cleanup_err)
+
+
+class MessageStreamAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def get_throttles(self):
+        return [ChatMessageRateThrottle()]
+
+    def post(self, request, session_id):
+        session = get_object_or_404(ChatSession, id=session_id, user=request.user)
+        user_content = (request.data.get("content") or "").strip()
+        if not user_content:
+            return Response({"error": "No content provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+        def event_stream():
+            try:
+                for event in handle_user_input_stream(session.id, user_content):
+                    yield f"data: {json.dumps(event)}\n\n"
+            except Exception as exc:
+                logger.exception("Error during event streaming: %s", exc)
+                err_data = json.dumps({"type": "error", "message": "Failed to generate response."})
+                yield f"data: {err_data}\n\n"
+
+        response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+        response["Cache-Control"] = "no-cache"
+        response["X-Accel-Buffering"] = "no"
+        return response
 
 
 class DailyPlanAPIView(APIView):

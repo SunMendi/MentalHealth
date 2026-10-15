@@ -7,6 +7,7 @@ from .views import (
     SessionListCreateAPIView, 
     SessionDetailAPIView,
     MessageListCreateApiView, 
+    MessageStreamAPIView,
     DailyPlanAPIView, 
     ActivatePlanAPIView,
     CommunityPostAPIView
@@ -28,6 +29,8 @@ urlpatterns = [
     path('chat/sessions/<int:session_id>', SessionDetailAPIView.as_view()),
     path('chat/sessions/<int:session_id>/messages/', MessageListCreateApiView.as_view(), name='message'),
     path('chat/sessions/<int:session_id>/messages', MessageListCreateApiView.as_view()),
+    path('chat/sessions/<int:session_id>/messages/stream/', MessageStreamAPIView.as_view(), name='message-stream'),
+    path('chat/sessions/<int:session_id>/messages/stream', MessageStreamAPIView.as_view()),
     path('plan/daily/', DailyPlanAPIView.as_view(), name='daily-plan'),
     path('plan/daily', DailyPlanAPIView.as_view()),
     path('plan/activate/<int:category_id>/', ActivatePlanAPIView.as_view(), name='activate-plan'),
