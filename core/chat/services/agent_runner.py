@@ -76,7 +76,7 @@ def _parse_dynamic_buttons_and_clean_text(raw_text: str) -> tuple[str, List[str]
     them from the user-facing message. If no tags exist, uses emotional fallbacks.
     """
     buttons: List[str] = []
-    clean_text = raw_text or ""
+    clean_text = (raw_text or "").replace("**", "").replace("##", "")
     
     match = re.search(r"<buttons>(.*?)</buttons>", clean_text, re.DOTALL | re.IGNORECASE)
     if match:
@@ -207,8 +207,9 @@ def run_agent_loop(
     # If the circuit breaker was reached without text
     if not final_content:
         final_content = (
-            "I'm here with you. Let's take a slow breath together. "
-            "How does your body feel right now?"
+            "আমি আপনার পাশে আছি। নিজের মতো করে গুছিয়ে বলুন, আমি শুনছি।"
+            if any("\u0980" <= ch <= "\u09FF" for ch in (user_message or ""))
+            else "I'm right here with you. Take your time, I am listening."
         )
 
     # Clean dynamic buttons and extract interactive replies
@@ -237,6 +238,8 @@ class StreamingButtonFilter:
         self.buttons_text = ""
 
     def process(self, chunk: str) -> str:
+        # Strip markdown bolding asterisks directly from streaming tokens
+        chunk = (chunk or "").replace("**", "")
         out = []
         for ch in chunk:
             if not self.in_buttons:

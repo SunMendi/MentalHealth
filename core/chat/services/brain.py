@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Any, Dict, Optional
 from asgiref.sync import async_to_sync
 from ..models import ChatSession, ProblemCategory, ChatMessage
@@ -27,22 +28,36 @@ def _looks_bengali(text: str) -> bool:
 
 def _ensure_question(text: str, is_bengali: bool) -> str:
     cleaned = (text or "").strip()
+    # Strip markdown asterisks and headers
+    cleaned = cleaned.replace("**", "").replace("##", "")
     if not cleaned:
         return (
-            "এই মুহূর্তে কোন জিনিসটা আপনার কাছে সবচেয়ে কঠিন লাগছে?"
+            "এই মুহূর্তে মনের ভেতর কী অনুভূতি হচ্ছে?"
             if is_bengali
-            else "Can you tell me a little more about what feels hardest right now?"
+            else "How are you feeling in your body and mind right now?"
         )
 
-    if "?" in cleaned[-3:]:
+    # Check if a question already exists towards the end of the text
+    last_segment = cleaned[-150:] if len(cleaned) > 150 else cleaned
+    if "?" in last_segment:
         return cleaned
 
+    # Check for Bengali question words with sentence boundary
+    bengali_q_words = ["কী", "কি", "কেমন", "কেন", "কোথায়", "কখন", "কাকে"]
+    if is_bengali and any(qw in last_segment for qw in bengali_q_words) and ("।" in last_segment or "..." in last_segment):
+        return cleaned
+
+    if cleaned.endswith("?"):
+        return cleaned
+
+    cleaned = re.sub(r'[\.\?\!\u0964\u0965\s]+$', '', cleaned)
+    sep = "। " if is_bengali else ". "
     follow_up = (
-        " এই মুহূর্তে কোন জিনিসটা সবচেয়ে বেশি কষ্ট দিচ্ছে?"
+        "এই মুহূর্তে মনের ভেতর কী অনুভূতি হচ্ছে?"
         if is_bengali
-        else " What feels most intense for you right now?"
+        else "What feels most important to talk about right now?"
     )
-    return f"{cleaned}{follow_up}"
+    return f"{cleaned}{sep}{follow_up}"
 
 
 def _find_problem_category(category_name: Optional[str]) -> Optional[ProblemCategory]:
@@ -280,11 +295,12 @@ def handle_user_input_stream(session_id: int, user_content: str):
             iterations = ev.get("iterations") or 1
 
     raw_text = "".join(accumulated_content).strip()
+    raw_text = raw_text.replace("**", "").replace("##", "")
     if not raw_text:
         raw_text = (
-            "আমি আপনার পাশে আছি। একটি ধীর শ্বাস নিন। এখন কেমন অনুভব করছেন?"
+            "আমি আপনার পাশে আছি। নিজের মতো করে বলুন, আমি শুনছি।"
             if is_bengali
-            else "I am here with you. Let's take a slow breath together. How does your body feel right now?"
+            else "I am right here with you. Take your time, I am listening."
         )
         yield {"type": "token", "content": raw_text}
 
