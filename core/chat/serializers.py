@@ -84,5 +84,5 @@ class AppVersionConfigSerializer(serializers.Serializer):
 
 class CommunityPostSerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
-    content = serializers.CharField()
+    content = serializers.CharField(max_length=1000, min_length=2, trim_whitespace=True)
     created_at = serializers.DateTimeField(read_only=True)

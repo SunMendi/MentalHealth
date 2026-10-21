@@ -136,7 +136,21 @@ def handle_user_input(session_id: int, user_content: str, audio_path: Optional[s
     # =====================================================================
     # 4. DISPATCH TO SPECIALIST SUBAGENT WITH TOOLS
     # =====================================================================
-    if mode == "panic":
+    if mode == "crisis":
+        session.current_flow = "crisis"
+        session.save(update_fields=["current_flow"])
+        crisis_result = handle_crisis_flow(user_content, user=session.user)
+        return create_assistant_message(
+            session_id,
+            content=crisis_result.content,
+            suggested_replies=crisis_result.suggested_replies,
+            metadata={
+                "agent_mode": "crisis",
+                "is_crisis": True,
+                "executed_tools": crisis_result.executed_tools,
+            },
+        )
+    elif mode == "panic":
         agent_result = handle_panic_flow(
             user_message=user_content,
             session_history=history,
@@ -261,6 +275,32 @@ def handle_user_input_stream(session_id: int, user_content: str):
         "agent_mode": mode,
         "detected_category": detected_cat_name,
     }
+
+    if mode == "crisis":
+        session.current_flow = "crisis"
+        session.save(update_fields=["current_flow"])
+        crisis_result = handle_crisis_flow(user_content, user=session.user)
+        assistant_msg = create_assistant_message(
+            session_id,
+            content=crisis_result.content,
+            suggested_replies=crisis_result.suggested_replies,
+            metadata={
+                "agent_mode": "crisis",
+                "is_crisis": True,
+                "executed_tools": crisis_result.executed_tools,
+            },
+        )
+        words = crisis_result.content.split(" ")
+        for i, word in enumerate(words):
+            token = word if i == 0 else " " + word
+            yield {"type": "token", "content": token}
+        yield {
+            "type": "done",
+            "assistant_message": ChatMessageResponseSerializer(assistant_msg).data,
+            "suggested_buttons": crisis_result.suggested_replies,
+            "audio_base64": None,
+        }
+        return
 
     # 4. Select System Prompt and Temperature
     if mode == "panic":

@@ -315,6 +315,7 @@ class ReviewerLoginView(APIView):
     """
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
+    throttle_classes = [AnonRateThrottle]
 
     def post(self, request):
         email = request.data.get("email", "").strip().lower()
@@ -330,7 +331,9 @@ class ReviewerLoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        if email == reviewer_email.strip().lower() and secret == reviewer_secret:
+        email_clean = email.strip().lower()
+        target_email = reviewer_email.strip().lower()
+        if secrets.compare_digest(email_clean, target_email) and secrets.compare_digest(secret, reviewer_secret):
             logger.info("Reviewer bypass login successful for email=%s", email)
             
             user = User.objects.filter(email=email).first()

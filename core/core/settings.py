@@ -11,19 +11,33 @@ SECRET_KEY = os.getenv(
     "DJANGO_SECRET_KEY",
     "django-insecure-&vozo4ff2gu((-v^^*ik&_s(@/usr/bin/bash^izs=5@1l=cab+7x4d!wdhc",
 )
-DEBUG = True
-ALLOWED_HOSTS = ['*']
 
-# ARCHITECT RECOVERY: Trust the Proxy and Disable Strict Headers for Dev
+DEBUG = os.getenv("DJANGO_DEBUG", os.getenv("DEBUG", "False")).lower() in ("true", "1", "yes")
+
+allowed_hosts_env = os.getenv("DJANGO_ALLOWED_HOSTS", "")
+if allowed_hosts_env:
+    ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_env.split(",") if h.strip()]
+elif DEBUG:
+    ALLOWED_HOSTS = ["*"]
+else:
+    ALLOWED_HOSTS = [
+        ".up.railway.app",
+        ".railway.app",
+        "sereniomind.com",
+        ".sereniomind.com",
+        "localhost",
+        "127.0.0.1",
+    ]
+
+# Trust the Proxy and Security Headers
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True
 
-# Disable the headers causing ERR_BLOCKED_BY_RESPONSE
 SECURE_CROSS_ORIGIN_OPENER_POLICY = None
-X_FRAME_OPTIONS = 'ALLOWALL'
-XS_RF_COOKIE_SAMESITE = 'None'
-SESSION_COOKIE_SAMESITE = 'None'
+X_FRAME_OPTIONS = 'SAMEORIGIN'
+XS_RF_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SAMESITE = 'Lax'
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -125,8 +139,19 @@ SIMPLE_JWT = {
     ),
 }
 
-CORS_ALLOW_ALL_ORIGINS = True  # Fully open for recovery
+CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "True" if DEBUG else "False").lower() in ("true", "1", "yes")
 CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://.*\.up\.railway\.app$",
+    r"^https://.*\.railway\.app$",
+    r"^https://.*\.lovableproject\.com$",
+    r"^https://.*\.lovable\.app$",
+    r"^https://sereniomind\.com$",
+    r"^https://.*\.sereniomind\.com$",
+    r"^http://localhost:\d+$",
+    r"^http://127\.0\.0\.1:\d+$",
+]
 
 CSRF_TRUSTED_ORIGINS = [
     "https://*.up.railway.app",

@@ -31,6 +31,7 @@ from .services.voice import generate_speech_base64, transcribe_audio
 from .services.plans import get_daily_task, complete_daily_task, activate_plan
 from .audio_utils import get_audio_duration_seconds
 from .throttles import AudioTranscriptionRateThrottle, ChatMessageRateThrottle
+from rest_framework.throttling import UserRateThrottle
 
 logger = logging.getLogger("chat.views")
 MAX_AUDIO_DURATION_SECONDS = int(os.getenv("MAX_AUDIO_DURATION_SECONDS", "180"))
@@ -38,7 +39,10 @@ MAX_AUDIO_FILE_SIZE_BYTES = int(os.getenv("MAX_AUDIO_FILE_SIZE_BYTES", str(10 * 
 
 
 def _persist_temp_audio(audio_file):
-    temp_name = f"input_{uuid.uuid4()}_{audio_file.name}"
+    original_ext = os.path.splitext(getattr(audio_file, "name", "") or "")[1].lower()
+    allowed_exts = {".wav", ".mp3", ".m4a", ".ogg", ".webm", ".aac", ".flac"}
+    safe_ext = original_ext if original_ext in allowed_exts else ".wav"
+    temp_name = f"input_{uuid.uuid4()}{safe_ext}"
     temp_dir = os.path.join(settings.BASE_DIR, "media", "temp")
     os.makedirs(temp_dir, exist_ok=True)
     temp_path = os.path.join(temp_dir, temp_name)
@@ -148,6 +152,7 @@ class AudioTranscriptionAPIView(APIView):
 
 class TextToSpeechAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ChatMessageRateThrottle]
 
     def post(self, request):
         serializer = TextToSpeechSerializer(data=request.data)
@@ -495,9 +500,10 @@ class ActivatePlanAPIView(APIView):
 
 class CommunityPostAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [UserRateThrottle]
 
     def get(self, request):
-        posts = CommunityPost.objects.all()[:50]
+        posts = CommunityPost.objects.all().order_by("-created_at")[:50]
         serializer = CommunityPostSerializer(posts, many=True)
         return Response(serializer.data)
 
