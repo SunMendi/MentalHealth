@@ -28,6 +28,8 @@ INTENSITY_HIGH_PATTERNS = [
 ]
 
 MEDICAL_PATTERNS = [
+    r"\bpain in (?:my |the )?chest\b",
+    r"\b(?:cannot|can not) breathe\b",
     r"\bchest pain\b",
     r"\bchest tight\b",
     r"\bfaint\b",

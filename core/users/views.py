@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import secrets
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlsplit
 import requests
 from urllib.parse import urlencode
 from base64 import urlsafe_b64decode, urlsafe_b64encode
@@ -295,7 +295,7 @@ class GoogleCallbackView(APIView):
                 access_token=str(access_token),
                 refresh_token=str(refresh),
             )
-            logger.info("Redirecting after Google login | platform=%s | target=%s", platform, final_redirect)
+            logger.info("Redirecting after Google login | platform=%s | target=%s", platform, urlsplit(final_redirect)._replace(query="", fragment="").geturl())
             if platform == "mobile":
                 return _mobile_deep_link_response(final_redirect)
             return redirect(final_redirect)

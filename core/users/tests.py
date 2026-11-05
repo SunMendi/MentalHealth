@@ -36,8 +36,8 @@ class GoogleOAuthFlowTests(TestCase):
         self.assertEqual(decoded["platform"], "mobile")
         self.assertTrue(decoded.get("nonce"))
 
-    @patch("core.users.views.requests.get")
-    @patch("core.users.views.requests.post")
+    @patch("users.views.requests.get")
+    @patch("users.views.requests.post")
     @patch.dict("os.environ", {
         "GOOGLE_CLIENT_ID": "google-client-id",
         "GOOGLE_CLIENT_SECRET": "google-client-secret",
@@ -61,7 +61,10 @@ class GoogleOAuthFlowTests(TestCase):
         auth_url_response = self.client.get("/api/google/auth-url/?platform=mobile")
         state_value = auth_url_response.data["auth_url"].split("state=", 1)[1].split("&", 1)[0]
 
-        response = self.client.get(f"/api/google/callback/?code=test-code&state={state_value}")
+        with self.assertLogs("users.views", level="INFO") as logs:
+            response = self.client.get(f"/api/google/callback/?code=test-code&state={state_value}")
+        self.assertNotIn("access=", " ".join(logs.output))
+        self.assertNotIn("refresh=", " ".join(logs.output))
 
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response["Location"].startswith("sereniomind://auth-callback?"))

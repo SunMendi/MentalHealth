@@ -10,11 +10,17 @@ from .views import (
     MessageStreamAPIView,
     DailyPlanAPIView, 
     ActivatePlanAPIView,
+    PlanCategoryListAPIView,
+    SpecialistWaitlistAPIView,
+    CommunityPostReportAPIView,
     CommunityPostAPIView
 )
 
 
 urlpatterns = [
+    path("plan/categories/", PlanCategoryListAPIView.as_view(), name="plan-categories"),
+    path("specialist/waitlist/", SpecialistWaitlistAPIView.as_view(), name="specialist-waitlist"),
+    path("community/posts/<int:post_id>/report/", CommunityPostReportAPIView.as_view(), name="community-post-report"),
     path('app/version-check/', AppVersionCheckAPIView.as_view(), name='app-version-check'),
     path('app/version-check', AppVersionCheckAPIView.as_view()),
     path('app/version-config/', AppVersionConfigAPIView.as_view(), name='app-version-config'),

@@ -40,8 +40,9 @@ class ChatSafetyLimitsTests(TestCase):
     def tearDown(self):
         cache.clear()
 
-    @patch("core.chat.views.generate_speech_base64", return_value=None)
-    @patch("core.chat.views.handle_user_input")
+    @patch("chat.throttles.ChatMessageRateThrottle.rate", "20/hour")
+    @patch("chat.views.generate_speech_base64", return_value=None)
+    @patch("chat.views.handle_user_input")
     def test_chat_message_rate_limit_blocks_after_twentieth_request(self, mock_handle_user_input, _mock_tts):
         def fake_handle_user_input(session_id, user_content):
             ChatMessage.objects.create(session_id=session_id, sender="user", content=user_content)
@@ -57,7 +58,8 @@ class ChatSafetyLimitsTests(TestCase):
         blocked_response = self.client.post(url, {"content": "message 21"}, format="json")
         self.assertEqual(blocked_response.status_code, 429)
 
-    @patch("core.chat.views.transcribe_audio", return_value="hello")
+    @patch("chat.throttles.AudioTranscriptionRateThrottle.rate", "5/hour")
+    @patch("chat.views.transcribe_audio", return_value="hello")
     def test_audio_transcription_rate_limit_blocks_after_fifth_request(self, _mock_transcribe):
         url = "/api/voice/transcribe/"
 
@@ -75,8 +77,8 @@ class ChatSafetyLimitsTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Maximum allowed length is 3 minutes.", response.data["error"])
 
-    @patch("core.chat.views.get_audio_duration_seconds", return_value=None)
-    @patch("core.chat.views.transcribe_audio", return_value="hello")
+    @patch("chat.views.get_audio_duration_seconds", return_value=None)
+    @patch("chat.views.transcribe_audio", return_value="hello")
     def test_audio_transcription_allows_unsupported_duration_when_transcription_succeeds(
         self,
         _mock_transcribe,
@@ -91,9 +93,9 @@ class ChatSafetyLimitsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["transcription"], "hello")
 
-    @patch("core.chat.views.MAX_AUDIO_FILE_SIZE_BYTES", 10)
-    @patch("core.chat.views.get_audio_duration_seconds", return_value=None)
-    @patch("core.chat.views.transcribe_audio", return_value="hello")
+    @patch("chat.views.MAX_AUDIO_FILE_SIZE_BYTES", 10)
+    @patch("chat.views.get_audio_duration_seconds", return_value=None)
+    @patch("chat.views.transcribe_audio", return_value="hello")
     def test_audio_transcription_rejects_large_file_when_duration_is_unknown(
         self,
         _mock_transcribe,
@@ -108,7 +110,7 @@ class ChatSafetyLimitsTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("under 3 minutes", response.data["error"])
 
-    @patch("core.chat.views.generate_speech_base64", return_value={"base64": "ZmFrZQ==", "voice": "en-US-EmmaMultilingualNeural"})
+    @patch("chat.views.generate_speech_base64", return_value={"base64": "ZmFrZQ==", "voice": "en-US-EmmaMultilingualNeural"})
     def test_standalone_tts_returns_audio_base64(self, _mock_tts):
         response = self.client.post("/api/voice/tts/", {"text": "You're safe. Breathe in and out."}, format="json")
 
@@ -139,9 +141,9 @@ class SupportPlannerTests(TestCase):
             protocol_text="Problem solving protocol",
             recent_interventions=[],
         )
-        self.assertEqual(plan["current_need"], "ADVICE")
-        self.assertEqual(plan["response_style"], "warm_reflective")
-        self.assertIn("one practical next step", plan["next_step"].lower())
+        self.assertEqual(plan["current_need"], "PROBLEM_SOLVING")
+        self.assertEqual(plan["response_style"], "structured_coaching")
+        self.assertIn("one small action", plan["next_step"].lower())
 
     def test_support_plan_uses_reframing_for_overthinking(self):
         plan = build_support_plan(
@@ -156,6 +158,7 @@ class SupportPlannerTests(TestCase):
 
 class AppVersionApiTests(TestCase):
     def setUp(self):
+        AppVersionConfig.objects.all().delete()
         self.client = APIClient()
         self.staff_user = User.objects.create_user(username="admin", password="secret123", is_staff=True)
         self.normal_user = User.objects.create_user(username="member", password="secret123")

@@ -86,3 +86,39 @@ class CommunityPostSerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
     content = serializers.CharField(max_length=1000, min_length=2, trim_whitespace=True)
     created_at = serializers.DateTimeField(read_only=True)
+
+
+class PlanCategoryResponseSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    description = serializers.CharField()
+
+
+class SpecialistWaitlistRequestSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=150, trim_whitespace=True)
+    contact = serializers.CharField(max_length=254, trim_whitespace=True)
+    focus = serializers.ChoiceField(choices=[
+        "Anxiety & Panic", "Depression & Low Mood", "Sleep & Insomnia",
+        "Relationship & Family Stress", "General Mental Wellness",
+    ])
+
+    def validate_contact(self, value):
+        if "@" in value:
+            field = serializers.EmailField()
+            return field.run_validation(value)
+        digits = re.sub(r"\D", "", value)
+        if not re.fullmatch(r"[+\d ()-]+", value) or not 6 <= len(digits) <= 20:
+            raise serializers.ValidationError("Enter a valid email address or phone number.")
+        return value
+
+
+class SpecialistWaitlistResponseSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    contact = serializers.CharField()
+    focus = serializers.CharField()
+    created_at = serializers.DateTimeField()
+
+
+class CommunityReportRequestSerializer(serializers.Serializer):
+    reason = serializers.CharField(max_length=1000, required=False, allow_blank=True, default="", trim_whitespace=True)

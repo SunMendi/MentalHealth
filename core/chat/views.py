@@ -4,7 +4,7 @@ import logging
 import json
 from asgiref.sync import async_to_sync
 from django.conf import settings
-from django.http import StreamingHttpResponse
+from django.http import StreamingHttpResponse, Http404
 from django.shortcuts import get_object_or_404
 from rest_framework import status, permissions
 from rest_framework.response import Response
@@ -12,7 +12,7 @@ from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from .models import ChatSession, CommunityPost
-from .models import AppVersionConfig
+from .models import AppVersionConfig, SpecialistWaitlistRegistration
 from .serializers import (
     AppVersionCheckSerializer,
     AppVersionConfigSerializer,
@@ -21,6 +21,10 @@ from .serializers import (
     CreateSessionSerializer,
     TextToSpeechSerializer,
     CommunityPostSerializer,
+    PlanCategoryResponseSerializer,
+    SpecialistWaitlistRequestSerializer,
+    SpecialistWaitlistResponseSerializer,
+    CommunityReportRequestSerializer,
 )
 from .services.chat_services import (
     create_session,
@@ -28,7 +32,9 @@ from .services.chat_services import (
 )
 from .services.brain import handle_user_input, handle_user_input_stream
 from .services.voice import generate_speech_base64, transcribe_audio
-from .services.plans import get_daily_task, complete_daily_task, activate_plan
+from .services.plans import get_daily_task, complete_daily_task, activate_plan, available_plan_categories
+from .services.release_features import save_waitlist_registration, cancel_waitlist_registration, report_community_post
+from rest_framework.exceptions import APIException
 from .audio_utils import get_audio_duration_seconds
 from .throttles import AudioTranscriptionRateThrottle, ChatMessageRateThrottle
 from rest_framework.throttling import UserRateThrottle
@@ -476,7 +482,10 @@ class DailyPlanAPIView(APIView):
             "day": data["day"],
             "title": data["task"].title,
             "description": data["task"].description,
-            "is_completed": data["is_completed"]
+            "is_completed": data["is_completed"],
+            "category": data["category"],
+            "category_id": data["category_id"],
+            "total_days": data["total_days"]
         })
 
     def post(self, request):
@@ -493,6 +502,8 @@ class ActivatePlanAPIView(APIView):
         try:
             plan = activate_plan(request.user, category_id)
             return Response({"message": f"Plan for category {category_id} activated.", "plan_id": plan.id})
+        except (APIException, Http404):
+            raise
         except Exception as e:
             logger.exception("Plan activation failed: %s", e)
             return Response({"error": "Could not activate plan."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -503,7 +514,7 @@ class CommunityPostAPIView(APIView):
     throttle_classes = [UserRateThrottle]
 
     def get(self, request):
-        posts = CommunityPost.objects.all().order_by("-created_at")[:50]
+        posts = CommunityPost.objects.exclude(reports__user=request.user).order_by("-created_at")[:50]
         serializer = CommunityPostSerializer(posts, many=True)
         return Response(serializer.data)
 
@@ -514,3 +525,51 @@ class CommunityPostAPIView(APIView):
             
         CommunityPost.objects.create(content=serializer.validated_data["content"])
         return Response({"message": "Thought shared anonymously."}, status=status.HTTP_201_CREATED)
+
+
+class PlanCategoryListAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response(PlanCategoryResponseSerializer(available_plan_categories(), many=True).data)
+
+
+class SpecialistWaitlistAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        registration = SpecialistWaitlistRegistration.objects.filter(user=request.user).first()
+        return Response({"registered": registration is not None,
+                         "registration": SpecialistWaitlistResponseSerializer(registration).data if registration else None})
+
+    def post(self, request):
+        serializer = SpecialistWaitlistRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            registration = save_waitlist_registration(request.user, serializer.validated_data)
+        except (APIException, Http404):
+            raise
+        except Exception:
+            logger.exception("Waitlist registration failed")
+            return Response({"detail": "Could not save your registration. Please try again."}, status=500)
+        return Response({"registered": True, "registration": SpecialistWaitlistResponseSerializer(registration).data})
+
+    def delete(self, request):
+        cancel_waitlist_registration(request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CommunityPostReportAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, post_id):
+        serializer = CommunityReportRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            report_community_post(request.user, post_id, serializer.validated_data["reason"])
+        except (APIException, Http404):
+            raise
+        except Exception:
+            logger.exception("Community reporting failed")
+            return Response({"detail": "Could not submit this report. Please try again."}, status=500)
+        return Response({"message": "Reflection reported.", "reported": True})

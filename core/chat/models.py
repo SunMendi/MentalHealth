@@ -147,3 +147,23 @@ class AppVersionConfig(models.Model):
 
     def __str__(self):
         return f"{self.platform}: latest={self.latest_version} min={self.minimum_supported_version}"
+
+
+class SpecialistWaitlistRegistration(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="specialist_waitlist")
+    name = models.CharField(max_length=150)
+    contact = models.CharField(max_length=254)
+    focus = models.CharField(max_length=80)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class CommunityPostReport(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    post = models.ForeignKey(CommunityPost, on_delete=models.CASCADE, related_name="reports")
+    reason = models.TextField(blank=True, max_length=1000)
+    created_at = models.DateTimeField(auto_now_add=True)
+    reviewed = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["user", "post"], name="unique_user_post_report")]
