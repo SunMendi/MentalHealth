@@ -2,8 +2,10 @@ import os
 import uuid
 import logging
 import json
+from time import monotonic
 from asgiref.sync import async_to_sync
 from django.conf import settings
+from django.core.handlers.asgi import ASGIRequest
 from django.http import StreamingHttpResponse, Http404
 from django.shortcuts import get_object_or_404
 from rest_framework import status, permissions
@@ -14,6 +16,7 @@ from rest_framework.renderers import JSONRenderer
 
 from .models import ChatSession, CommunityPost
 from .negotiation import EventStreamContentNegotiation
+from .streaming import async_stream
 from .models import AppVersionConfig, SpecialistWaitlistRegistration
 from .serializers import (
     AppVersionCheckSerializer,
@@ -460,15 +463,36 @@ class MessageStreamAPIView(APIView):
             return Response({"error": "No content provided"}, status=status.HTTP_400_BAD_REQUEST)
 
         def event_stream():
+            started = monotonic()
+            first_token_at = None
+            last_token_at = None
             try:
                 for event in handle_user_input_stream(session.id, user_content):
+                    elapsed = monotonic() - started
+                    if event.get("type") == "token":
+                        if first_token_at is None:
+                            first_token_at = elapsed
+                        last_token_at = elapsed
+                    elif event.get("type") == "done":
+                        logger.info(
+                            "Chat stream timing | session_id=%s | first_token_s=%s | "
+                            "last_token_s=%s | total_s=%.3f | has_audio=%s",
+                            session.id,
+                            round(first_token_at, 3) if first_token_at is not None else None,
+                            round(last_token_at, 3) if last_token_at is not None else None,
+                            elapsed,
+                            bool(event.get("audio_base64")),
+                        )
                     yield f"data: {json.dumps(event)}\n\n"
             except Exception as exc:
                 logger.exception("Error during event streaming: %s", exc)
                 err_data = json.dumps({"type": "error", "message": "Failed to generate response."})
                 yield f"data: {err_data}\n\n"
 
-        response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
+        events = event_stream()
+        if isinstance(request._request, ASGIRequest):
+            events = async_stream(events)
+        response = StreamingHttpResponse(events, content_type="text/event-stream")
         response["Cache-Control"] = "no-cache"
         response["X-Accel-Buffering"] = "no"
         return response
