@@ -103,7 +103,9 @@ async def generate_speech_base64(text: str, voice: Optional[str] = None) -> Opti
     if not text or not text.strip():
         return None
     selected_voice = voice or choose_tts_voice(text)
-    chunks = _split_speech_text(text)
+    # Production benchmarks showed no consistent gain from parallel Bengali
+    # requests. Keep those voices on one request rather than adding overhead.
+    chunks = [text] if selected_voice.startswith("bn-") else _split_speech_text(text)
     started = monotonic()
     logger.info("Starting TTS generation | voice=%s | length=%d | chunks=%d", selected_voice, len(text), len(chunks))
 

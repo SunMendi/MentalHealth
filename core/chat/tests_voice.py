@@ -86,6 +86,13 @@ class SpeechChunkingTests(SimpleTestCase):
         self.assertEqual(result["voice"], "custom-voice")
         self.assertTrue(all(call.args[1] == "custom-voice" for call in synthesize.call_args_list))
 
+    async def test_bengali_voice_uses_one_complete_request(self):
+        text = "আজকের দিনটি আপনার জন্য অনেক ব্যস্ত ছিল। এখন সব সমস্যার সমাধান করতে হবে না। " * 5
+        with patch.object(voice, "_synthesize_speech_chunk", return_value=b"audio") as synthesize:
+            result = await voice.generate_speech_base64(text)
+        self.assertEqual(result["voice"], voice.EDGE_TTS_BN_VOICE)
+        synthesize.assert_awaited_once_with(text, voice.EDGE_TTS_BN_VOICE)
+
     async def test_failed_chunk_retries_complete_text_without_returning_partial_audio(self):
         parts = voice._split_speech_text(LONG_TEXT)
 
