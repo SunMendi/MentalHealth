@@ -1,6 +1,9 @@
+import asyncio
 import base64
 import logging
 import os
+import re
+from time import monotonic
 from typing import Dict, Optional
 
 import edge_tts
@@ -11,6 +14,8 @@ logger = logging.getLogger("chat.voice")
 # TTS Settings (Edge TTS)
 EDGE_TTS_DEFAULT_VOICE = os.getenv("EDGE_TTS_DEFAULT_VOICE", "en-US-EmmaMultilingualNeural")
 EDGE_TTS_BN_VOICE = os.getenv("EDGE_TTS_BN_VOICE", "bn-BD-NabanitaNeural")
+EDGE_TTS_MAX_CHUNKS = max(1, min(3, int(os.getenv("EDGE_TTS_MAX_CHUNKS", "3"))))
+EDGE_TTS_TIMEOUT_SECONDS = float(os.getenv("EDGE_TTS_TIMEOUT_SECONDS", "30"))
 
 # STT Settings (ElevenLabs)
 ELEVENLABS_STT_URL = "https://api.elevenlabs.io/v1/speech-to-text"
@@ -43,23 +48,82 @@ def choose_tts_voice(text: str) -> str:
     return EDGE_TTS_DEFAULT_VOICE
 
 
+def _split_speech_text(text: str) -> list[str]:
+    """Balance complete sentences across at most three synthesis requests.
+
+    Keep every character in its original order. Short replies and single
+    sentences use one request, avoiding extra connection overhead.
+    """
+    if len(text) < 180 or EDGE_TTS_MAX_CHUNKS == 1:
+        return [text]
+
+    sentences = re.split(r"(?<=[.!?।])(?=\s+\S)", text)
+    count = min(EDGE_TTS_MAX_CHUNKS, len(sentences))
+    chunks = []
+    while count > 1:
+        target = sum(map(len, sentences)) / count
+        length = 0
+        candidates = []
+        for end in range(1, len(sentences) - count + 2):
+            length += len(sentences[end - 1])
+            candidates.append((abs(length - target), end))
+        _, end = min(candidates)
+        chunks.append("".join(sentences[:end]))
+        sentences = sentences[end:]
+        count -= 1
+    chunks.append("".join(sentences))
+    return chunks
+
+
+async def _synthesize_speech_chunk(text: str, voice: str) -> bytes:
+    audio = bytearray()
+    async for chunk in edge_tts.Communicate(text, voice).stream():
+        if chunk["type"] == "audio":
+            audio.extend(chunk["data"])
+    if not audio:
+        raise ValueError("Edge TTS returned no audio")
+    return bytes(audio)
+
+
+async def _synthesize_speech_chunks(chunks: list[str], voice: str) -> bytes:
+    tasks = [asyncio.create_task(_synthesize_speech_chunk(chunk, voice)) for chunk in chunks]
+    try:
+        # Edge TTS returns headerless, fixed-format MP3 frames. Joining complete
+        # results in text order keeps one MP3 compatible with existing players.
+        return b"".join(await asyncio.gather(*tasks))
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def generate_speech_base64(text: str, voice: Optional[str] = None) -> Optional[Dict[str, str]]:
-    """
-    Generates high-quality speech using Edge TTS and returns a Base64 string.
-    """
+    """Generate one complete MP3, synthesizing sentence groups concurrently."""
+    if not text or not text.strip():
+        return None
     selected_voice = voice or choose_tts_voice(text)
-    logger.info("Starting TTS generation | voice=%s | length=%d", selected_voice, len(text or ""))
+    chunks = _split_speech_text(text)
+    started = monotonic()
+    logger.info("Starting TTS generation | voice=%s | length=%d | chunks=%d", selected_voice, len(text), len(chunks))
 
     try:
-        communicate = edge_tts.Communicate(text, selected_voice)
-        audio_data = b""
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_data += chunk["data"]
+        async with asyncio.timeout(EDGE_TTS_TIMEOUT_SECONDS):
+            if len(chunks) == 1:
+                audio_data = await _synthesize_speech_chunk(text, selected_voice)
+            else:
+                try:
+                    audio_data = await _synthesize_speech_chunks(chunks, selected_voice)
+                except Exception:
+                    # Never return a reply missing a sentence. Retry the full
+                    # text once within the same overall deadline.
+                    logger.warning("Parallel TTS failed; retrying full text | voice=%s", selected_voice)
+                    audio_data = await _synthesize_speech_chunk(text, selected_voice)
 
-        if not audio_data:
-            logger.warning("Edge TTS returned empty audio buffer")
-            return None
+        logger.info(
+            "TTS generation complete | voice=%s | chunks=%d | duration_s=%.3f | audio_bytes=%d",
+            selected_voice, len(chunks), monotonic() - started, len(audio_data),
+        )
 
         return {
             "base64": base64.b64encode(audio_data).decode("utf-8"),
