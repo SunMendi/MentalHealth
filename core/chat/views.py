@@ -10,8 +10,10 @@ from rest_framework import status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.renderers import JSONRenderer
 
 from .models import ChatSession, CommunityPost
+from .negotiation import EventStreamContentNegotiation
 from .models import AppVersionConfig, SpecialistWaitlistRegistration
 from .serializers import (
     AppVersionCheckSerializer,
@@ -445,6 +447,8 @@ class MessageListCreateApiView(APIView):
 class MessageStreamAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [JSONParser]
+    renderer_classes = [JSONRenderer]
+    content_negotiation_class = EventStreamContentNegotiation
 
     def get_throttles(self):
         return [ChatMessageRateThrottle()]
